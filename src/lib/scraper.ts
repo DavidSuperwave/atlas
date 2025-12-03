@@ -13,9 +13,13 @@
  * - 'dolphin': Uses Dolphin Anty anti-detect browser (requires local installation)
  * - 'gologin': Uses GoLogin cloud anti-detect browser (recommended for production)
  * 
+ * MULTI-PROFILE SUPPORT (GoLogin):
+ * - Pass userId to scrapeApollo() to use user's assigned profile
+ * - Falls back to GOLOGIN_PROFILE_ID env var if no assignment
+ * 
  * API COMPATIBILITY:
  * - Import: `import { scrapeApollo, ScrapedLead } from '@/lib/scraper'`
- * - Function signature: `scrapeApollo(url: string, pages?: number): Promise<ScrapedLead[]>`
+ * - Function signature: `scrapeApollo(url: string, pages?: number, userId?: string): Promise<ScrapedLead[]>`
  * - All existing code continues to work without modification
  * 
  * CONFLICT PREVENTION:
@@ -27,7 +31,7 @@
  * @see docs/GOLOGIN_SETUP.md for GoLogin setup instructions
  */
 
-import { ScrapedLead, ScrapeError, ScraperMode, ScraperFunction } from './scraper-types';
+import { ScrapedLead, ScrapeError, ScraperMode } from './scraper-types';
 import { scrapeApollo as scrapeApolloLocal } from './scraper-local';
 import { scrapeApollo as scrapeApolloDolphin } from './scraper-dolphin';
 import { scrapeApollo as scrapeApolloGoLogin } from './scraper-gologin';
@@ -36,6 +40,11 @@ import { BrowserManagerLocal } from './browser-manager-local';
 // Re-export types for backward compatibility
 // This allows existing code to continue using: import { ScrapedLead } from '@/lib/scraper'
 export type { ScrapedLead, ScrapeError, ScraperMode };
+
+/**
+ * Extended scraper function type that supports optional userId
+ */
+export type ScraperFunctionWithUser = (url: string, pages?: number, userId?: string) => Promise<ScrapedLead[]>;
 
 /**
  * Get the current scraper mode from environment
@@ -87,7 +96,7 @@ async function checkForConflicts(mode: ScraperMode): Promise<{ hasConflict: bool
  * 
  * @returns The scraper function for the configured mode
  */
-export function getScraper(): ScraperFunction {
+export function getScraper(): ScraperFunctionWithUser {
     const mode = getScraperMode();
     console.log(`[SCRAPER-FACTORY] Using scraper mode: ${mode}`);
     
@@ -101,13 +110,7 @@ export function getScraper(): ScraperFunction {
                     'See docs/GOLOGIN_SETUP.md for setup instructions.'
                 );
             }
-            if (!process.env.GOLOGIN_PROFILE_ID) {
-                throw new Error(
-                    'GoLogin scraper is not configured. ' +
-                    'Please set GOLOGIN_PROFILE_ID environment variable. ' +
-                    'See docs/GOLOGIN_SETUP.md for setup instructions.'
-                );
-            }
+            // Note: GOLOGIN_PROFILE_ID is now optional (can use database assignments)
             return scrapeApolloGoLogin;
             
         case 'dolphin':
@@ -119,11 +122,15 @@ export function getScraper(): ScraperFunction {
                     'See docs/DOLPHIN_ANTY_SETUP.md for setup instructions.'
                 );
             }
-            return scrapeApolloDolphin;
+            // Dolphin scraper doesn't support userId, wrap it
+            return (url: string, pages?: number, _userId?: string) => 
+                scrapeApolloDolphin(url, pages);
             
         case 'local':
         default:
-            return scrapeApolloLocal;
+            // Local scraper doesn't support userId, wrap it
+            return (url: string, pages?: number, _userId?: string) => 
+                scrapeApolloLocal(url, pages);
     }
 }
 
@@ -133,9 +140,10 @@ export function getScraper(): ScraperFunction {
  * This is the main entry point for scraping. It automatically selects
  * the appropriate scraper based on SCRAPER_MODE environment variable.
  * 
- * FUNCTION SIGNATURE (maintains backward compatibility):
+ * FUNCTION SIGNATURE:
  * @param url - Apollo search URL to scrape
  * @param pages - Number of pages to scrape (default: 1)
+ * @param userId - Optional user ID for GoLogin profile lookup
  * @returns Promise<ScrapedLead[]> - Array of scraped leads
  * 
  * @example
@@ -143,16 +151,14 @@ export function getScraper(): ScraperFunction {
  * const leads = await scrapeApollo('https://app.apollo.io/#/people?...', 3);
  * 
  * @example
- * // Uses GoLogin (when SCRAPER_MODE=gologin) - RECOMMENDED
- * // Set environment: SCRAPER_MODE=gologin
- * const leads = await scrapeApollo('https://app.apollo.io/#/people?...', 3);
+ * // Uses GoLogin with user's assigned profile
+ * const leads = await scrapeApollo('https://app.apollo.io/#/people?...', 3, user.id);
  * 
  * @example
- * // Uses Dolphin Anty (when SCRAPER_MODE=dolphin)
- * // Set environment: SCRAPER_MODE=dolphin
+ * // Uses GoLogin with default profile from env var
  * const leads = await scrapeApollo('https://app.apollo.io/#/people?...', 3);
  */
-export async function scrapeApollo(url: string, pages: number = 1): Promise<ScrapedLead[]> {
+export async function scrapeApollo(url: string, pages: number = 1, userId?: string): Promise<ScrapedLead[]> {
     const mode = getScraperMode();
     
     // Check for potential conflicts
@@ -166,11 +172,12 @@ export async function scrapeApollo(url: string, pages: number = 1): Promise<Scra
     console.log(`[SCRAPER-FACTORY] Scraper Mode: ${mode.toUpperCase()}`);
     console.log(`[SCRAPER-FACTORY] URL: ${url}`);
     console.log(`[SCRAPER-FACTORY] Pages: ${pages}`);
+    console.log(`[SCRAPER-FACTORY] User ID: ${userId || '(none)'}`);
     console.log(`[SCRAPER-FACTORY] ========================================`);
     
     // Get and execute the appropriate scraper
     const scraper = getScraper();
-    return scraper(url, pages);
+    return scraper(url, pages, userId);
 }
 
 /**
@@ -202,8 +209,9 @@ export async function validateScraperConfig(): Promise<{
         if (!process.env.GOLOGIN_API_TOKEN) {
             errors.push('GOLOGIN_API_TOKEN environment variable is not set');
         }
+        // GOLOGIN_PROFILE_ID is optional when using database assignments
         if (!process.env.GOLOGIN_PROFILE_ID) {
-            errors.push('GOLOGIN_PROFILE_ID environment variable is not set');
+            warnings.push('GOLOGIN_PROFILE_ID environment variable is not set. Using database profile assignments or user assignments.');
         }
     }
     
@@ -236,6 +244,7 @@ export function getScraperStatus(): {
     modeSource: 'environment' | 'default';
     isDolphinConfigured: boolean;
     isGoLoginConfigured: boolean;
+    hasGoLoginFallback: boolean;
 } {
     const envMode = process.env.SCRAPER_MODE?.toLowerCase();
     
@@ -247,7 +256,9 @@ export function getScraperStatus(): {
             process.env.DOLPHIN_ANTY_PROFILE_ID
         ),
         isGoLoginConfigured: !!(
-            process.env.GOLOGIN_API_TOKEN &&
+            process.env.GOLOGIN_API_TOKEN
+        ),
+        hasGoLoginFallback: !!(
             process.env.GOLOGIN_PROFILE_ID
         )
     };

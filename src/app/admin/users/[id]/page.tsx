@@ -22,6 +22,21 @@ interface Transaction {
     created_at: string;
 }
 
+interface GoLoginProfile {
+    id: string;
+    profile_id: string;
+    name: string;
+    is_active: boolean;
+}
+
+interface ProfileAssignment {
+    profileDbId: string;
+    profileGoLoginId: string;
+    profileName: string;
+    assignedAt: string;
+    source: string;
+}
+
 export default function AdminUserDetailsPage() {
     const params = useParams();
     const userId = params.id as string;
@@ -38,9 +53,18 @@ export default function AdminUserDetailsPage() {
     const [submitting, setSubmitting] = useState(false);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+    // GoLogin profile assignment
+    const [goLoginProfiles, setGoLoginProfiles] = useState<GoLoginProfile[]>([]);
+    const [currentAssignment, setCurrentAssignment] = useState<ProfileAssignment | null>(null);
+    const [selectedProfileId, setSelectedProfileId] = useState('');
+    const [assigningProfile, setAssigningProfile] = useState(false);
+    const [profileError, setProfileError] = useState<string | null>(null);
+    const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
+
     useEffect(() => {
         if (!authLoading && currentUser && userId) {
             fetchUserData();
+            fetchGoLoginData();
         }
     }, [currentUser, authLoading, userId]);
 
@@ -71,6 +95,95 @@ export default function AdminUserDetailsPage() {
             console.error(err);
         } finally {
             setLoading(false);
+        }
+    }
+
+    async function fetchGoLoginData() {
+        try {
+            // Fetch available profiles
+            const profilesRes = await fetch('/api/admin/gologin-profiles');
+            if (profilesRes.ok) {
+                const data = await profilesRes.json();
+                setGoLoginProfiles(data.profiles?.filter((p: GoLoginProfile) => p.is_active) || []);
+            }
+
+            // Fetch user's current assignment
+            const assignRes = await fetch(`/api/admin/gologin-profiles/assign?userId=${userId}`);
+            if (assignRes.ok) {
+                const data = await assignRes.json();
+                if (data.hasAssignment && data.assignment) {
+                    setCurrentAssignment(data.assignment);
+                    setSelectedProfileId(data.assignment.profileDbId);
+                } else {
+                    setCurrentAssignment(null);
+                    setSelectedProfileId('');
+                }
+            }
+        } catch (err) {
+            console.error('Error fetching GoLogin data:', err);
+        }
+    }
+
+    async function handleAssignProfile() {
+        if (!selectedProfileId) return;
+
+        setAssigningProfile(true);
+        setProfileError(null);
+        setProfileSuccess(null);
+
+        try {
+            const res = await fetch('/api/admin/gologin-profiles/assign', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    userId,
+                    profileDbId: selectedProfileId,
+                }),
+            });
+
+            const data = await res.json();
+            if (res.ok) {
+                setProfileSuccess(data.message || 'Profile assigned successfully');
+                fetchGoLoginData();
+            } else {
+                setProfileError(data.error || 'Failed to assign profile');
+            }
+        } catch (err) {
+            setProfileError('An error occurred');
+            console.error(err);
+        } finally {
+            setAssigningProfile(false);
+        }
+    }
+
+    async function handleUnassignProfile() {
+        if (!confirm('Are you sure you want to unassign this profile?')) return;
+
+        setAssigningProfile(true);
+        setProfileError(null);
+        setProfileSuccess(null);
+
+        try {
+            const res = await fetch('/api/admin/gologin-profiles/assign', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId }),
+            });
+
+            const data = await res.json();
+            if (res.ok) {
+                setProfileSuccess('Profile unassigned successfully');
+                setCurrentAssignment(null);
+                setSelectedProfileId('');
+                fetchGoLoginData();
+            } else {
+                setProfileError(data.error || 'Failed to unassign profile');
+            }
+        } catch (err) {
+            setProfileError('An error occurred');
+            console.error(err);
+        } finally {
+            setAssigningProfile(false);
         }
     }
 
@@ -275,6 +388,100 @@ export default function AdminUserDetailsPage() {
                             {submitting ? 'Adding Credits...' : 'Add Credits'}
                         </button>
                     </form>
+                </div>
+
+                {/* GoLogin Profile Assignment */}
+                <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+                    <div className="flex items-center justify-between mb-4">
+                        <div>
+                            <h3 className="text-lg font-semibold text-gray-900">GoLogin Profile</h3>
+                            <p className="text-sm text-gray-500">
+                                Assign a browser profile for this user's scrapes
+                            </p>
+                        </div>
+                        <Link
+                            href="/admin/gologin-profiles"
+                            className="text-sm text-blue-600 hover:underline"
+                        >
+                            Manage Profiles →
+                        </Link>
+                    </div>
+
+                    {profileError && (
+                        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm mb-4">
+                            {profileError}
+                        </div>
+                    )}
+
+                    {profileSuccess && (
+                        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-700 text-sm mb-4">
+                            {profileSuccess}
+                        </div>
+                    )}
+
+                    {/* Current Assignment */}
+                    {currentAssignment ? (
+                        <div className="bg-gray-50 rounded-lg p-4 mb-4">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="font-medium text-gray-900">{currentAssignment.profileName}</p>
+                                    <p className="text-sm text-gray-500 font-mono">{currentAssignment.profileGoLoginId}</p>
+                                    <p className="text-xs text-gray-400 mt-1">
+                                        Assigned {new Date(currentAssignment.assignedAt).toLocaleDateString()}
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={handleUnassignProfile}
+                                    disabled={assigningProfile}
+                                    className="px-3 py-1.5 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                    Unassign
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                            <p className="text-yellow-800 text-sm">
+                                No profile assigned. This user will use the default profile from environment variables.
+                            </p>
+                        </div>
+                    )}
+
+                    {/* Assign New Profile */}
+                    <div className="space-y-3">
+                        <label className="block text-sm font-medium text-gray-700">
+                            {currentAssignment ? 'Change Profile' : 'Assign Profile'}
+                        </label>
+                        <div className="flex gap-2">
+                            <select
+                                value={selectedProfileId}
+                                onChange={(e) => setSelectedProfileId(e.target.value)}
+                                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            >
+                                <option value="">Select a profile...</option>
+                                {goLoginProfiles.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                        {p.name} ({p.profile_id.slice(0, 8)}...)
+                                    </option>
+                                ))}
+                            </select>
+                            <button
+                                onClick={handleAssignProfile}
+                                disabled={!selectedProfileId || assigningProfile || selectedProfileId === currentAssignment?.profileDbId}
+                                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                                {assigningProfile ? 'Assigning...' : 'Assign'}
+                            </button>
+                        </div>
+                        {goLoginProfiles.length === 0 && (
+                            <p className="text-sm text-gray-500">
+                                No profiles available.{' '}
+                                <Link href="/admin/gologin-profiles" className="text-blue-600 hover:underline">
+                                    Add one first
+                                </Link>
+                            </p>
+                        )}
+                    </div>
                 </div>
 
                 {/* Transaction History */}

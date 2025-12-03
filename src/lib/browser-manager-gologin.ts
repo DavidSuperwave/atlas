@@ -5,6 +5,10 @@
  * It provides the same interface as browser-manager-dolphin.ts for seamless
  * integration with the scraper factory.
  * 
+ * MULTI-PROFILE SUPPORT:
+ * - Use getBrowserForProfile(profileId) to get a browser for a specific profile
+ * - Use browserManagerGoLogin for default profile (from env var)
+ * 
  * PREREQUISITES:
  * 1. GoLogin account with API access
  * 2. Browser profile created with Apollo logged in
@@ -12,50 +16,51 @@
  * 
  * ENVIRONMENT VARIABLES:
  * - GOLOGIN_API_TOKEN: API token from GoLogin dashboard
- * - GOLOGIN_PROFILE_ID: Profile ID to use for scraping
- * 
- * ADVANTAGES OVER DOLPHIN ANTY:
- * - Cloud-based: No local installation required
- * - No VNC setup needed
- * - Web dashboard for team access
- * - API-first design
+ * - GOLOGIN_PROFILE_ID: Default profile ID (optional fallback)
  * 
  * @see docs/GOLOGIN_SETUP.md for setup instructions
  */
 
 import puppeteer, { Browser } from 'puppeteer';
-import { goLoginClient, GoLoginClient } from './gologin-client';
+import { GoLoginClient } from './gologin-client';
 
 /** Maximum connection retry attempts */
 const MAX_RETRIES = 3;
 /** Delay between retry attempts in milliseconds */
 const RETRY_DELAY = 2000;
 
+/** Cache of browser managers by profile ID */
+const browserManagerCache = new Map<string, BrowserManagerGoLogin>();
+
 /**
  * BrowserManagerGoLogin handles connections to GoLogin browser profiles
  * 
- * Singleton pattern ensures only one connection is active at a time.
- * This prevents resource conflicts and ensures session consistency.
+ * This class manages browser connections for a specific profile ID.
+ * Use getBrowserForProfile() to get a manager for a specific profile.
  */
 export class BrowserManagerGoLogin {
-    private static instance: BrowserManagerGoLogin;
     private browser: Browser | null = null;
     private isConnecting = false;
     private client: GoLoginClient;
     private currentWsEndpoint: string | null = null;
+    private profileId: string;
 
-    private constructor() {
-        this.client = goLoginClient;
+    /**
+     * Create a new browser manager for a specific profile
+     * 
+     * @param profileId - The GoLogin profile ID to manage
+     * @param apiToken - Optional API token (defaults to env var)
+     */
+    constructor(profileId: string, apiToken?: string) {
+        this.profileId = profileId;
+        this.client = new GoLoginClient(apiToken, profileId);
     }
 
     /**
-     * Get the singleton instance of BrowserManagerGoLogin
+     * Get the profile ID this manager is for
      */
-    static getInstance(): BrowserManagerGoLogin {
-        if (!BrowserManagerGoLogin.instance) {
-            BrowserManagerGoLogin.instance = new BrowserManagerGoLogin();
-        }
-        return BrowserManagerGoLogin.instance;
+    getProfileId(): string {
+        return this.profileId;
     }
 
     /**
@@ -97,14 +102,7 @@ export class BrowserManagerGoLogin {
      * @throws Error if GoLogin is not available or profile fails to start
      */
     async startProfile(): Promise<string> {
-        console.log('[GOLOGIN-BROWSER] Starting GoLogin profile...');
-
-        // Check if GoLogin is configured
-        if (!this.isConfigured()) {
-            throw new Error(
-                'GoLogin is not configured. Please set GOLOGIN_API_TOKEN and GOLOGIN_PROFILE_ID environment variables.'
-            );
-        }
+        console.log(`[GOLOGIN-BROWSER] Starting GoLogin profile ${this.profileId}...`);
 
         // Check if GoLogin API is available
         const available = await this.isGoLoginAvailable();
@@ -118,7 +116,7 @@ export class BrowserManagerGoLogin {
         const wsEndpoint = await this.client.ensureProfileRunning();
         this.currentWsEndpoint = wsEndpoint;
 
-        console.log('[GOLOGIN-BROWSER] Profile started successfully');
+        console.log(`[GOLOGIN-BROWSER] Profile ${this.profileId} started successfully`);
         return wsEndpoint;
     }
 
@@ -126,10 +124,10 @@ export class BrowserManagerGoLogin {
      * Stop the GoLogin profile
      */
     async stopProfile(): Promise<void> {
-        console.log('[GOLOGIN-BROWSER] Stopping GoLogin profile...');
+        console.log(`[GOLOGIN-BROWSER] Stopping GoLogin profile ${this.profileId}...`);
         await this.client.stopProfile();
         this.currentWsEndpoint = null;
-        console.log('[GOLOGIN-BROWSER] Profile stopped');
+        console.log(`[GOLOGIN-BROWSER] Profile ${this.profileId} stopped`);
     }
 
     /**
@@ -140,7 +138,7 @@ export class BrowserManagerGoLogin {
     async ensureProfileReady(): Promise<string> {
         // Check if we already have a valid connection
         if (this.currentWsEndpoint && this.browser?.connected) {
-            console.log('[GOLOGIN-BROWSER] Profile already running and connected');
+            console.log(`[GOLOGIN-BROWSER] Profile ${this.profileId} already running and connected`);
             return this.currentWsEndpoint;
         }
 
@@ -157,13 +155,13 @@ export class BrowserManagerGoLogin {
     async connect(): Promise<Browser> {
         // Return existing connection if available
         if (this.browser && this.browser.connected) {
-            console.log('[GOLOGIN-BROWSER] Reusing existing browser connection');
+            console.log(`[GOLOGIN-BROWSER] Reusing existing browser connection for profile ${this.profileId}`);
             return this.browser;
         }
 
         // Prevent concurrent connection attempts
         if (this.isConnecting) {
-            console.log('[GOLOGIN-BROWSER] Connection attempt already in progress, waiting...');
+            console.log(`[GOLOGIN-BROWSER] Connection attempt already in progress for profile ${this.profileId}, waiting...`);
             await this.sleep(1000);
             return this.connect();
         }
@@ -177,25 +175,25 @@ export class BrowserManagerGoLogin {
             // Attempt connection with retries
             for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
                 try {
-                    console.log(`[GOLOGIN-BROWSER] Connecting to browser (attempt ${attempt}/${MAX_RETRIES})...`);
+                    console.log(`[GOLOGIN-BROWSER] Connecting to browser for profile ${this.profileId} (attempt ${attempt}/${MAX_RETRIES})...`);
 
                     this.browser = await puppeteer.connect({
                         browserWSEndpoint: wsEndpoint,
                         defaultViewport: null,
                     });
 
-                    console.log('[GOLOGIN-BROWSER] Successfully connected to GoLogin browser!');
+                    console.log(`[GOLOGIN-BROWSER] Successfully connected to GoLogin browser for profile ${this.profileId}!`);
 
                     // Set up disconnect handler
                     this.browser.on('disconnected', () => {
-                        console.log('[GOLOGIN-BROWSER] Browser disconnected');
+                        console.log(`[GOLOGIN-BROWSER] Browser disconnected for profile ${this.profileId}`);
                         this.browser = null;
                         this.currentWsEndpoint = null;
                     });
 
                     return this.browser;
                 } catch (error) {
-                    console.error(`[GOLOGIN-BROWSER] Connection attempt ${attempt} failed:`, error);
+                    console.error(`[GOLOGIN-BROWSER] Connection attempt ${attempt} failed for profile ${this.profileId}:`, error);
 
                     if (attempt < MAX_RETRIES) {
                         console.log(`[GOLOGIN-BROWSER] Retrying in ${RETRY_DELAY}ms...`);
@@ -203,14 +201,14 @@ export class BrowserManagerGoLogin {
 
                         // Try restarting the profile if connection keeps failing
                         if (attempt === 2) {
-                            console.log('[GOLOGIN-BROWSER] Restarting profile...');
+                            console.log(`[GOLOGIN-BROWSER] Restarting profile ${this.profileId}...`);
                             await this.stopProfile();
                             await this.sleep(1000);
                             await this.startProfile();
                         }
                     } else {
                         throw new Error(
-                            `Failed to connect to GoLogin browser after ${MAX_RETRIES} attempts. ` +
+                            `Failed to connect to GoLogin browser for profile ${this.profileId} after ${MAX_RETRIES} attempts. ` +
                             'Please check that your GoLogin profile is properly configured.'
                         );
                     }
@@ -241,9 +239,9 @@ export class BrowserManagerGoLogin {
         if (this.browser) {
             try {
                 await this.browser.disconnect();
-                console.log('[GOLOGIN-BROWSER] Disconnected from browser');
+                console.log(`[GOLOGIN-BROWSER] Disconnected from browser for profile ${this.profileId}`);
             } catch (error) {
-                console.error('[GOLOGIN-BROWSER] Error disconnecting:', error);
+                console.error(`[GOLOGIN-BROWSER] Error disconnecting from profile ${this.profileId}:`, error);
             }
             this.browser = null;
         }
@@ -256,7 +254,7 @@ export class BrowserManagerGoLogin {
     async cleanup(): Promise<void> {
         await this.disconnect();
         await this.stopProfile();
-        console.log('[GOLOGIN-BROWSER] Cleanup complete');
+        console.log(`[GOLOGIN-BROWSER] Cleanup complete for profile ${this.profileId}`);
     }
 
     /**
@@ -266,7 +264,7 @@ export class BrowserManagerGoLogin {
     async getStatus(): Promise<{
         goLoginAvailable: boolean;
         configured: boolean;
-        profileId: string | null;
+        profileId: string;
         profileRunning: boolean;
         browserConnected: boolean;
         wsEndpoint: string | null;
@@ -277,7 +275,7 @@ export class BrowserManagerGoLogin {
         return {
             goLoginAvailable: available,
             configured: this.isConfigured(),
-            profileId: this.client.getProfileId(),
+            profileId: this.profileId,
             profileRunning: status.isRunning,
             browserConnected: this.browser?.connected || false,
             wsEndpoint: this.currentWsEndpoint
@@ -292,6 +290,64 @@ export class BrowserManagerGoLogin {
     }
 }
 
-// Export singleton instance for use by scraper-gologin
-export const browserManagerGoLogin = BrowserManagerGoLogin.getInstance();
+/**
+ * Get a browser manager for a specific profile ID
+ * 
+ * This function returns a cached browser manager for the given profile ID,
+ * or creates a new one if it doesn't exist.
+ * 
+ * @param profileId - The GoLogin profile ID
+ * @returns BrowserManagerGoLogin instance for the profile
+ */
+export function getBrowserManagerForProfile(profileId: string): BrowserManagerGoLogin {
+    let manager = browserManagerCache.get(profileId);
+    
+    if (!manager) {
+        console.log(`[GOLOGIN-BROWSER] Creating new browser manager for profile ${profileId}`);
+        manager = new BrowserManagerGoLogin(profileId);
+        browserManagerCache.set(profileId, manager);
+    }
+    
+    return manager;
+}
 
+/**
+ * Get a browser for a specific profile ID
+ * Convenience function that gets the manager and connects in one call
+ * 
+ * @param profileId - The GoLogin profile ID
+ * @returns Connected Puppeteer Browser instance
+ */
+export async function getBrowserForProfile(profileId: string): Promise<Browser> {
+    const manager = getBrowserManagerForProfile(profileId);
+    return manager.getBrowser();
+}
+
+/**
+ * Cleanup a specific profile's browser manager
+ * 
+ * @param profileId - The GoLogin profile ID
+ */
+export async function cleanupProfile(profileId: string): Promise<void> {
+    const manager = browserManagerCache.get(profileId);
+    if (manager) {
+        await manager.cleanup();
+        browserManagerCache.delete(profileId);
+    }
+}
+
+/**
+ * Cleanup all browser managers
+ */
+export async function cleanupAllProfiles(): Promise<void> {
+    for (const [profileId, manager] of browserManagerCache.entries()) {
+        await manager.cleanup();
+    }
+    browserManagerCache.clear();
+}
+
+// Export default instance for backward compatibility (uses env var profile)
+const defaultProfileId = process.env.GOLOGIN_PROFILE_ID || '';
+export const browserManagerGoLogin = defaultProfileId 
+    ? getBrowserManagerForProfile(defaultProfileId)
+    : new BrowserManagerGoLogin(''); // Will fail if used without profile ID

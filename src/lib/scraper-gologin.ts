@@ -5,6 +5,10 @@
  * It provides enhanced anonymity and Cloudflare bypass through anti-detect
  * fingerprinting and residential proxy support.
  * 
+ * MULTI-PROFILE SUPPORT:
+ * - Pass userId to scrapeApollo() to use user's assigned profile
+ * - Falls back to GOLOGIN_PROFILE_ID env var if no assignment
+ * 
  * PREREQUISITES:
  * 1. GoLogin account with API access
  * 2. Browser profile created with Apollo logged in
@@ -13,15 +17,16 @@
  * ENVIRONMENT VARIABLES:
  * - SCRAPER_MODE=gologin (to enable this scraper)
  * - GOLOGIN_API_TOKEN: API token from GoLogin dashboard
- * - GOLOGIN_PROFILE_ID: Profile ID to use for scraping
+ * - GOLOGIN_PROFILE_ID: Default profile ID (optional fallback)
  * 
- * FUNCTION SIGNATURE (must match all scrapers):
- * scrapeApollo(url: string, pages?: number): Promise<ScrapedLead[]>
+ * FUNCTION SIGNATURE:
+ * scrapeApollo(url: string, pages?: number, userId?: string): Promise<ScrapedLead[]>
  * 
  * @see docs/GOLOGIN_SETUP.md for setup instructions
  */
 
-import { browserManagerGoLogin } from './browser-manager-gologin';
+import { getBrowserForProfile, browserManagerGoLogin } from './browser-manager-gologin';
+import { getUserProfileId, ProfileLookupResult } from './gologin-profile-manager';
 import { Page, ElementHandle } from 'puppeteer';
 import type { ScrapedLead, ScrapeError } from './scraper-types';
 
@@ -160,23 +165,74 @@ async function extractCellData(page: Page, cells: ElementHandle[], index: number
 }
 
 /**
+ * Get the profile ID to use for scraping
+ * 
+ * @param userId - Optional user ID to look up assigned profile
+ * @returns Profile lookup result with profile ID and source
+ */
+async function getProfileForScrape(userId?: string): Promise<ProfileLookupResult> {
+    if (userId) {
+        // Look up user's assigned profile
+        const result = await getUserProfileId(userId);
+        if (result.profileId) {
+            return result;
+        }
+        // If no assignment, error will be in result
+        if (result.error) {
+            console.warn(`[GOLOGIN-SCRAPER] ${result.error}`);
+        }
+        return result;
+    }
+    
+    // No userId provided, use environment variable
+    const envProfileId = process.env.GOLOGIN_PROFILE_ID;
+    if (envProfileId) {
+        return {
+            profileId: envProfileId,
+            source: 'environment'
+        };
+    }
+    
+    return {
+        profileId: '',
+        source: 'none',
+        error: 'No GoLogin profile configured. Set GOLOGIN_PROFILE_ID or assign a profile to the user.'
+    };
+}
+
+/**
  * Scrape leads from Apollo.io using GoLogin
  * 
  * This function scrapes lead data from an Apollo search results page.
  * It uses GoLogin cloud browser for enhanced anonymity and Cloudflare bypass.
  * 
- * FUNCTION SIGNATURE (must match all scrapers):
  * @param url - Apollo search URL to scrape
  * @param pages - Number of pages to scrape (default: 1)
+ * @param userId - Optional user ID to look up assigned profile
  * @returns Promise<ScrapedLead[]> - Array of scraped leads
  * 
  * @example
+ * // Use user's assigned profile
+ * const leads = await scrapeApollo('https://app.apollo.io/#/people?...', 3, 'user-uuid');
+ * 
+ * @example
+ * // Use default profile from env var
  * const leads = await scrapeApollo('https://app.apollo.io/#/people?...', 3);
  */
-export async function scrapeApollo(url: string, pages: number = 1): Promise<ScrapedLead[]> {
+export async function scrapeApollo(url: string, pages: number = 1, userId?: string): Promise<ScrapedLead[]> {
     console.log('[GOLOGIN-SCRAPER] === Starting Apollo Scrape (GoLogin Mode) ===');
     console.log(`[GOLOGIN-SCRAPER] Target URL: ${url}`);
     console.log(`[GOLOGIN-SCRAPER] Pages to scrape: ${pages}`);
+    console.log(`[GOLOGIN-SCRAPER] User ID: ${userId || '(none - using default profile)'}`);
+
+    // Get the profile to use
+    const profileResult = await getProfileForScrape(userId);
+    
+    if (!profileResult.profileId) {
+        throw new Error(profileResult.error || 'No GoLogin profile available for scraping.');
+    }
+    
+    console.log(`[GOLOGIN-SCRAPER] Using profile: ${profileResult.profileId} (source: ${profileResult.source}${profileResult.profileName ? `, name: ${profileResult.profileName}` : ''})`);
 
     let page: Page | null = null;
     const allLeads: ScrapedLead[] = [];
@@ -184,7 +240,9 @@ export async function scrapeApollo(url: string, pages: number = 1): Promise<Scra
 
     try {
         console.log('[GOLOGIN-SCRAPER] Getting GoLogin browser connection...');
-        const browser = await browserManagerGoLogin.getBrowser();
+        
+        // Get browser for the specific profile
+        const browser = await getBrowserForProfile(profileResult.profileId);
 
         console.log('[GOLOGIN-SCRAPER] Creating new page...');
         page = await browser.newPage();
@@ -419,3 +477,13 @@ export async function scrapeApollo(url: string, pages: number = 1): Promise<Scra
     }
 }
 
+/**
+ * Get the profile result that would be used for a scrape
+ * Useful for UI to show which profile will be used
+ * 
+ * @param userId - Optional user ID
+ * @returns Profile lookup result
+ */
+export async function getScraperProfileInfo(userId?: string): Promise<ProfileLookupResult> {
+    return getProfileForScrape(userId);
+}

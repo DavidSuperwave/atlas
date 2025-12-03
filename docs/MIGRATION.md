@@ -161,11 +161,11 @@ CREATE TABLE scrapes (
 );
 ```
 
-**Note**: The `scraper_mode` column may need to be added if migrating from an older version:
+**Note**: If any columns are missing, run the consolidated migration script:
 
-```sql
-ALTER TABLE scrapes 
-ADD COLUMN IF NOT EXISTS scraper_mode TEXT;
+```bash
+# Via Supabase SQL Editor or psql
+# See supabase/migrate_all.sql for the full script
 ```
 
 ### Leads Table
@@ -366,13 +366,26 @@ npm install
 
 #### 5. Set Up Database
 
-```bash
-# Run any pending migrations
-npm run db:migrate
+Run the consolidated migration script to set up all required tables and columns:
 
-# Or apply schema manually
-psql -f supabase/schema.sql
+**Option A: Via Supabase SQL Editor (Recommended)**
+1. Go to your Supabase project dashboard
+2. Navigate to SQL Editor
+3. Copy and paste the contents of `supabase/migrate_all.sql`
+4. Click "Run" to execute
+5. Verify the output shows all columns were created
+
+**Option B: Via psql command line**
+```bash
+# If you have direct database access
+psql "$DATABASE_URL" -f supabase/migrate_all.sql
 ```
+
+The migration script is idempotent (safe to run multiple times) and includes:
+- Credit system tables (`user_profiles`, `credit_transactions`)
+- Campaign fields (`name`, `tags` on scrapes)
+- Scraper mode tracking (`scraper_mode` on scrapes)
+- GoLogin profile management tables
 
 #### 6. Verify Setup
 
@@ -471,13 +484,18 @@ Options:
 
 ### Database Schema Mismatch
 
-**Symptom**: Errors when saving leads
+**Symptom**: Errors like "Could not find the 'scraper_mode' column" or similar
 
 **Solutions**:
-1. Apply latest schema migrations
-2. Check `scraper_mode` column exists
-3. Verify all required columns exist
-4. Check for any schema differences
+1. Run the consolidated migration script:
+   ```bash
+   # Via Supabase SQL Editor - paste contents of supabase/migrate_all.sql
+   # Or via psql:
+   psql "$DATABASE_URL" -f supabase/migrate_all.sql
+   ```
+2. The script will verify all columns exist after running
+3. Required scrapes columns: `user_id`, `name`, `tags`, `scraper_mode`, `gologin_profile_id`
+4. Required leads columns: `user_id`, `credits_used`, `api_key_used`
 
 ### Permission Issues
 

@@ -19,7 +19,7 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/supabase-server';
 import { goLoginClient } from '@/lib/gologin-client';
-import { BrowserManagerGoLogin } from '@/lib/browser-manager-gologin';
+import { getBrowserManagerForProfile } from '@/lib/browser-manager-gologin';
 import { getScraperMode, getScraperStatus, validateScraperConfig } from '@/lib/scraper';
 
 export const runtime = 'nodejs';
@@ -67,9 +67,9 @@ export async function GET() {
                 }));
             }
 
-            // Get browser manager status if in gologin mode
-            if (scraperStatus.mode === 'gologin') {
-                const manager = BrowserManagerGoLogin.getInstance();
+            // Get browser manager status if in gologin mode and profile is configured
+            if (scraperStatus.mode === 'gologin' && goLoginClient.getProfileId()) {
+                const manager = getBrowserManagerForProfile(goLoginClient.getProfileId()!);
                 browserStatus = await manager.getStatus();
             }
         }

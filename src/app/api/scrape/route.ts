@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { scrapeApollo, ScrapedLead, getScraperMode } from '@/lib/scraper';
 import { getCurrentUser, createServiceClient } from '@/lib/supabase-server';
 import { handleCors, corsJsonResponse } from '@/lib/cors';
+import { getUserProfileDbId } from '@/lib/gologin-profile-manager';
 
 const supabase = createServiceClient();
 
@@ -38,7 +39,13 @@ export async function POST(request: Request) {
             return corsJsonResponse({ error: 'URL is required' }, request, { status: 400 });
         }
 
-        // Create scrape record with user_id, name, tags, and scraper_mode
+        // Get the user's assigned GoLogin profile ID for tracking (if using gologin mode)
+        let gologinProfileDbId: string | null = null;
+        if (scraperMode === 'gologin') {
+            gologinProfileDbId = await getUserProfileDbId(user.id);
+        }
+
+        // Create scrape record with user_id, name, tags, scraper_mode, and gologin_profile_id
         const { data: scrape, error: scrapeError } = await supabase
             .from('scrapes')
             .insert({ 
@@ -48,7 +55,8 @@ export async function POST(request: Request) {
                 user_id: user.id,
                 name: name?.trim() || null,
                 tags: Array.isArray(tags) ? tags : [],
-                scraper_mode: scraperMode // Track which scraper was used
+                scraper_mode: scraperMode, // Track which scraper was used
+                gologin_profile_id: gologinProfileDbId // Track which profile was used
             })
             .select()
             .single();
@@ -60,8 +68,8 @@ export async function POST(request: Request) {
 
         scrapeId = scrape.id;
 
-        // Start scraping process
-        const leads = await scrapeApollo(url, pages);
+        // Start scraping process - pass user.id for GoLogin profile lookup
+        const leads = await scrapeApollo(url, pages, user.id);
         
         // Validate and filter leads before saving
         const validLeads = leads.filter(lead => {
