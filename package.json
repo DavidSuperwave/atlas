@@ -16,7 +16,8 @@
     "pg": "^8.16.3",
     "puppeteer": "^24.31.0",
     "react": "^19.2.1",
-    "react-dom": "^19.2.1"
+    "react-dom": "^19.2.1",
+    "resend": "^6.5.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

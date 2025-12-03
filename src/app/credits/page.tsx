@@ -120,7 +120,7 @@ export default function CreditsPage() {
                 {/* Header */}
                 <div className="flex items-center justify-between mb-8">
                     <div>
-                        <Link href="/" className="text-slate-400 hover:text-white text-sm mb-2 inline-block">
+                        <Link href="/dashboard" className="text-slate-400 hover:text-white text-sm mb-2 inline-block">
                             ← Back to Dashboard
                         </Link>
                         <h1 className="text-3xl font-bold text-white">Credits</h1>

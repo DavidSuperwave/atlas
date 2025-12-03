@@ -132,7 +132,7 @@ export default function AdminCreditsPage() {
                     </div>
                     <h2 className="text-2xl font-bold text-white mb-2">Access Denied</h2>
                     <p className="text-slate-400 mb-4">{error}</p>
-                    <Link href="/" className="text-emerald-400 hover:text-emerald-300">
+                    <Link href="/dashboard" className="text-emerald-400 hover:text-emerald-300">
                         Go to Dashboard
                     </Link>
                 </div>
@@ -146,7 +146,7 @@ export default function AdminCreditsPage() {
                 {/* Header */}
                 <div className="flex items-center justify-between mb-8">
                     <div>
-                        <Link href="/" className="text-slate-400 hover:text-white text-sm mb-2 inline-block">
+                        <Link href="/dashboard" className="text-slate-400 hover:text-white text-sm mb-2 inline-block">
                             ← Back to Dashboard
                         </Link>
                         <h1 className="text-3xl font-bold text-white">Admin: Credit Management</h1>

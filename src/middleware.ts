@@ -37,12 +37,22 @@ export async function middleware(request: NextRequest) {
     const { pathname } = request.nextUrl;
 
     // Public routes that don't require authentication
-    const publicRoutes = ['/login', '/signup', '/auth/callback'];
-    const isPublicRoute = publicRoutes.some(route => pathname.startsWith(route));
+    // Note: /signup removed - now invite-only system
+    const publicRoutes = ['/', '/login', '/invite', '/auth/callback'];
+    const isPublicRoute = publicRoutes.some(route => 
+        pathname === route || pathname.startsWith(route + '/')
+    );
 
-    // API routes that don't require auth (for backwards compatibility)
-    const publicApiRoutes = ['/api/auth'];
+    // API routes that don't require auth
+    const publicApiRoutes = ['/api/auth', '/api/access-requests'];
     const isPublicApiRoute = publicApiRoutes.some(route => pathname.startsWith(route));
+
+    // Redirect /signup to landing page (invite-only system)
+    if (pathname === '/signup' || pathname.startsWith('/signup/')) {
+        const url = request.nextUrl.clone();
+        url.pathname = '/';
+        return NextResponse.redirect(url);
+    }
 
     // If user is not logged in and trying to access protected route
     if (!user && !isPublicRoute && !isPublicApiRoute && !pathname.startsWith('/_next')) {
@@ -52,10 +62,10 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(url);
     }
 
-    // If user is logged in and trying to access login/signup, redirect to home
-    if (user && (pathname === '/login' || pathname === '/signup')) {
+    // If user is logged in and trying to access login or landing page, redirect to dashboard
+    if (user && (pathname === '/login' || pathname === '/')) {
         const url = request.nextUrl.clone();
-        url.pathname = '/';
+        url.pathname = '/dashboard';
         return NextResponse.redirect(url);
     }
 
@@ -70,7 +80,7 @@ export async function middleware(request: NextRequest) {
 
         if (!profile?.is_admin) {
             const url = request.nextUrl.clone();
-            url.pathname = '/';
+            url.pathname = '/dashboard';
             return NextResponse.redirect(url);
         }
     }
@@ -90,5 +100,3 @@ export const config = {
         '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
     ],
 };
-
-

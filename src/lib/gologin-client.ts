@@ -264,7 +264,7 @@ export class GoLoginClient {
             console.log(`[GOLOGIN-CLIENT] Starting profile: ${id}`);
             
             // Start the profile via GoLogin API
-            const response = await fetch(`${GOLOGIN_API_URL}/browser/${id}/start`, {
+            const response = await fetch(`${GOLOGIN_API_URL}/browser/v2/${id}/start`, {
                 method: 'POST',
                 headers: this.getHeaders(),
                 body: JSON.stringify({
@@ -287,7 +287,7 @@ export class GoLoginClient {
             
             if (!wsEndpoint) {
                 // Try alternative: Get remote debugging URL
-                const statusResponse = await fetch(`${GOLOGIN_API_URL}/browser/${id}/status`, {
+                const statusResponse = await fetch(`${GOLOGIN_API_URL}/browser/v2/${id}/status`, {
                     method: 'GET',
                     headers: this.getHeaders()
                 });
@@ -345,7 +345,7 @@ export class GoLoginClient {
         try {
             console.log(`[GOLOGIN-CLIENT] Stopping profile: ${id}`);
             
-            const response = await fetch(`${GOLOGIN_API_URL}/browser/${id}/stop`, {
+            const response = await fetch(`${GOLOGIN_API_URL}/browser/v2/${id}/stop`, {
                 method: 'POST',
                 headers: this.getHeaders()
             });
@@ -414,7 +414,7 @@ export class GoLoginClient {
 
             // Check via API
             try {
-                const statusResponse = await fetch(`${GOLOGIN_API_URL}/browser/${id}/status`, {
+                const statusResponse = await fetch(`${GOLOGIN_API_URL}/browser/v2/${id}/status`, {
                     method: 'GET',
                     headers: this.getHeaders()
                 });

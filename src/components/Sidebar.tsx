@@ -45,8 +45,8 @@ export default function Sidebar() {
   }, []);
 
   const isActive = (path: string) => {
-    if (path === '/' && pathname === '/') return true;
-    if (path !== '/' && pathname.startsWith(path)) return true;
+    if (path === '/dashboard' && pathname === '/dashboard') return true;
+    if (path !== '/dashboard' && pathname.startsWith(path)) return true;
     return false;
   };
 
@@ -74,7 +74,7 @@ export default function Sidebar() {
   const navItems = [
     {
       name: 'Scrapes',
-      path: '/',
+      path: '/dashboard',
       icon: (
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10" />
@@ -130,6 +130,28 @@ export default function Sidebar() {
       )
     },
     {
+      name: 'Access Requests',
+      path: '/admin/access-requests',
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <line x1="19" x2="19" y1="8" y2="14" />
+          <line x1="22" x2="16" y1="11" y2="11" />
+        </svg>
+      )
+    },
+    {
+      name: 'Invites',
+      path: '/admin/invites',
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect width="20" height="16" x="2" y="4" rx="2" />
+          <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+        </svg>
+      )
+    },
+    {
       name: 'GoLogin Profiles',
       path: '/admin/gologin-profiles',
       icon: (
@@ -157,8 +179,9 @@ export default function Sidebar() {
     }
   ];
 
-  // Don't show sidebar on auth pages
-  if (pathname === '/login' || pathname === '/signup') {
+  // Don't show sidebar on public pages
+  const publicPages = ['/', '/login', '/signup', '/invite'];
+  if (publicPages.some(page => pathname === page || pathname.startsWith('/invite'))) {
     return null;
   }
 
@@ -171,7 +194,7 @@ export default function Sidebar() {
       {/* Header / Toggle */}
       <div className="p-4 border-b border-gray-100 flex items-center justify-between h-16">
         {!isCollapsed && (
-          <span className="font-bold text-xl text-blue-600 truncate">Atlas</span>
+          <Link href="/dashboard" className="font-bold text-xl text-blue-600 truncate">Atlas</Link>
         )}
         <button 
           onClick={() => setIsCollapsed(!isCollapsed)}

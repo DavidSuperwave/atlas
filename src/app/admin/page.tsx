@@ -155,7 +155,7 @@ export default function AdminDashboardPage() {
                     </div>
                     <h2 className="text-2xl font-bold text-gray-900 mb-2">Access Denied</h2>
                     <p className="text-gray-600 mb-4">{error}</p>
-                    <Link href="/" className="text-blue-600 hover:text-blue-700">
+                    <Link href="/dashboard" className="text-blue-600 hover:text-blue-700">
                         Go to Dashboard
                     </Link>
                 </div>
@@ -247,6 +247,38 @@ export default function AdminDashboardPage() {
                             <div>
                                 <p className="text-sm text-white/80">Quick Action</p>
                                 <p className="text-lg font-bold">Add Credits</p>
+                            </div>
+                        </div>
+                    </Link>
+                </div>
+
+                {/* Invite Management Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                    <Link href="/admin/access-requests" className="bg-white rounded-xl border border-gray-200 p-6 hover:border-amber-300 hover:shadow-md transition-all">
+                        <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-lg bg-amber-100 flex items-center justify-center">
+                                <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 7a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM19 8v6M22 11h-6" />
+                                </svg>
+                            </div>
+                            <div>
+                                <p className="text-lg font-semibold text-gray-900">Access Requests</p>
+                                <p className="text-sm text-gray-500">Review and approve requests from the landing page</p>
+                            </div>
+                        </div>
+                    </Link>
+                    
+                    <Link href="/admin/invites" className="bg-white rounded-xl border border-gray-200 p-6 hover:border-blue-300 hover:shadow-md transition-all">
+                        <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-lg bg-blue-100 flex items-center justify-center">
+                                <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <rect width="20" height="16" x="2" y="4" rx="2" />
+                                    <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+                                </svg>
+                            </div>
+                            <div>
+                                <p className="text-lg font-semibold text-gray-900">Invites</p>
+                                <p className="text-sm text-gray-500">Send and manage user invitations</p>
                             </div>
                         </div>
                     </Link>

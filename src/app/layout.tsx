@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, Geist_Mono } from "next/font/google";
 import Sidebar from "../components/Sidebar";
 import { AuthProvider } from "../components/AuthProvider";
 import FloatingCreditBar from "../components/FloatingCreditBar";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
 });
 
@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Atlas",
-  description: "Tool for scraping and enriching leads",
+  description: "Private Market Intelligence Platform",
 };
 
 export default function RootLayout({
@@ -28,7 +28,8 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased flex min-h-screen bg-gray-50`}
+        className={`${inter.variable} ${geistMono.variable} antialiased flex min-h-screen bg-gray-50`}
+        style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
       >
         <AuthProvider>
           <Sidebar />
