@@ -27,7 +27,7 @@ const supabase = createServiceClient();
  */
 async function checkAdmin(userId: string): Promise<boolean> {
     const { data } = await supabase
-        .from('profiles')
+        .from('user_profiles')
         .select('is_admin')
         .eq('id', userId)
         .single();
@@ -58,7 +58,7 @@ export async function GET() {
 
         // Get all users for the dropdown
         const { data: users } = await supabase
-            .from('profiles')
+            .from('user_profiles')
             .select('id, email')
             .order('email');
 

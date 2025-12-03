@@ -24,7 +24,7 @@ const supabase = createServiceClient();
  */
 async function checkAdmin(userId: string): Promise<boolean> {
     const { data } = await supabase
-        .from('profiles')
+        .from('user_profiles')
         .select('is_admin')
         .eq('id', userId)
         .single();
@@ -139,7 +139,7 @@ export async function POST(request: Request) {
 
         // Verify the target user exists
         const { data: targetUser } = await supabase
-            .from('profiles')
+            .from('user_profiles')
             .select('id, email')
             .eq('id', userId)
             .single();
