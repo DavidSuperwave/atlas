@@ -29,9 +29,13 @@ export default function AccessRequestsPage() {
 
     const fetchRequests = useCallback(async () => {
         try {
-            const res = await fetch(`/api/access-requests?status=${filter}`);
+            const res = await fetch(`/api/admin/access-requests?status=${filter}`);
             if (!res.ok) {
-                setError('Failed to fetch requests');
+                if (res.status === 403) {
+                    setError('Access denied. Admin privileges required.');
+                } else {
+                    setError('Failed to fetch requests');
+                }
                 return;
             }
             const data = await res.json();
@@ -81,9 +85,30 @@ export default function AccessRequestsPage() {
     }
 
     async function handleReject(request: AccessRequest) {
-        // For now, we'll just mark as rejected without an API
-        // In a full implementation, you'd want an API endpoint for this
-        setActionMessage({ type: 'success', text: `Request from ${request.email} rejected` });
+        setActionMessage(null);
+
+        try {
+            const res = await fetch('/api/admin/access-requests', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    id: request.id,
+                    status: 'rejected',
+                }),
+            });
+
+            const data = await res.json();
+
+            if (!res.ok) {
+                setActionMessage({ type: 'error', text: data.error || 'Failed to reject request' });
+                return;
+            }
+
+            setActionMessage({ type: 'success', text: `Request from ${request.email} rejected` });
+            fetchRequests();
+        } catch (err) {
+            setActionMessage({ type: 'error', text: 'Failed to reject request' });
+        }
     }
 
     function formatDate(dateString: string) {

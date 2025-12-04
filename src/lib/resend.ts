@@ -1,7 +1,18 @@
 import { Resend } from 'resend';
 
-// Initialize Resend client
-export const resend = new Resend(process.env.RESEND_API_KEY);
+// Lazy initialization of Resend client
+let resendClient: Resend | null = null;
+
+function getResendClient(): Resend {
+    if (!resendClient) {
+        const apiKey = process.env.RESEND_API_KEY;
+        if (!apiKey) {
+            throw new Error('RESEND_API_KEY environment variable is not set');
+        }
+        resendClient = new Resend(apiKey);
+    }
+    return resendClient;
+}
 
 // Default sender email
 export const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'noreply@example.com';
@@ -19,6 +30,7 @@ export async function sendEmail({
     text?: string;
 }) {
     try {
+        const resend = getResendClient();
         const { data, error } = await resend.emails.send({
             from: FROM_EMAIL,
             to,
@@ -38,4 +50,3 @@ export async function sendEmail({
         throw error;
     }
 }
-
