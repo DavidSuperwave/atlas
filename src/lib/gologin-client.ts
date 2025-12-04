@@ -25,8 +25,17 @@ import { GoLogin } from 'gologin';
 /** GoLogin API base URL for status/management calls */
 const GOLOGIN_API_URL = 'https://api.gologin.com';
 
+/** GoLogin Cloud Browser WebSocket URL */
+const GOLOGIN_CLOUD_WS_URL = 'https://cloudbrowser.gologin.com';
+
 /** Debug mode flag */
 const DEBUG = process.env.GOLOGIN_DEBUG === 'true';
+
+/** 
+ * Cloud mode flag - when true, uses GoLogin's cloud browser instead of local
+ * This is REQUIRED for serverless environments like Railway/Vercel
+ */
+const CLOUD_MODE = process.env.GOLOGIN_CLOUD_MODE === 'true';
 
 /**
  * Debug log helper - only logs when GOLOGIN_DEBUG=true
@@ -134,6 +143,9 @@ export class GoLoginClient {
         if (this.profileId) {
             console.log(`[GOLOGIN-CLIENT] Using profile ID: ${this.profileId}`);
         }
+
+        // Log the mode being used
+        console.log(`[GOLOGIN-CLIENT] Mode: ${CLOUD_MODE ? 'CLOUD (GoLogin cloud browser)' : 'LOCAL (Orbita SDK)'}`);
     }
 
     /**
@@ -263,10 +275,10 @@ export class GoLoginClient {
     }
 
     /**
-     * Start a browser profile using the official GoLogin SDK
+     * Start a browser profile
      * 
-     * This launches a local Orbita browser with the profile's anti-detect
-     * fingerprint and returns a WebSocket endpoint for Puppeteer connection.
+     * In CLOUD MODE (Railway/serverless): Connects to GoLogin's cloud browser via WebSocket
+     * In LOCAL MODE (development): Downloads and runs local Orbita browser via SDK
      * 
      * @param profileId - Profile ID to start (uses default if not provided)
      * @returns Start response with WebSocket endpoint
@@ -291,13 +303,66 @@ export class GoLoginClient {
             };
         }
 
+        // Use cloud mode for serverless environments (Railway, Vercel)
+        if (CLOUD_MODE) {
+            return this.startCloudProfile(id);
+        }
+
+        // Local mode - use SDK to run browser locally
+        return this.startLocalProfile(id);
+    }
+
+    /**
+     * Start profile in CLOUD MODE
+     * Connects directly to GoLogin's cloud browser via WebSocket
+     * This is required for serverless environments without a display
+     */
+    private async startCloudProfile(profileId: string): Promise<GoLoginStartResponse> {
         try {
-            console.log(`[GOLOGIN-CLIENT] Starting profile: ${id} using GoLogin SDK`);
+            console.log(`[GOLOGIN-CLIENT] Starting profile ${profileId} in CLOUD MODE`);
+            
+            // Build the cloud WebSocket URL
+            const wsUrl = `${GOLOGIN_CLOUD_WS_URL}/connect?token=${this.apiToken}&profile=${profileId}`;
+            
+            debugLog('Cloud WebSocket URL constructed');
+
+            // Store the running profile (no SDK instance in cloud mode)
+            this.runningProfiles.set(profileId, { 
+                wsEndpoint: wsUrl, 
+                glInstance: null as unknown as GoLoginSDKInstance // Cloud mode has no SDK instance
+            });
+
+            console.log(`[GOLOGIN-CLIENT] Cloud profile ready`);
+            console.log(`[GOLOGIN-CLIENT] WebSocket endpoint: ${wsUrl.substring(0, 60)}...`);
+
+            return {
+                success: true,
+                wsEndpoint: wsUrl
+            };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            console.error(`[GOLOGIN-CLIENT] Error starting cloud profile ${profileId}:`, errorMessage);
+            return {
+                success: false,
+                wsEndpoint: '',
+                error: errorMessage
+            };
+        }
+    }
+
+    /**
+     * Start profile in LOCAL MODE
+     * Uses the GoLogin SDK to download and run Orbita browser locally
+     * This only works on machines with a display (not serverless)
+     */
+    private async startLocalProfile(profileId: string): Promise<GoLoginStartResponse> {
+        try {
+            console.log(`[GOLOGIN-CLIENT] Starting profile: ${profileId} using GoLogin SDK (LOCAL MODE)`);
             
             // Create GoLogin SDK instance
             const GL = new GoLogin({
                 token: this.apiToken,
-                profile_id: id,
+                profile_id: profileId,
                 // Upload cookies to server after stopping (preserves session)
                 uploadCookiesToServer: true,
                 // Import cookies from server on start
@@ -316,7 +381,7 @@ export class GoLoginClient {
             }
 
             // Store the running instance
-            this.runningProfiles.set(id, { 
+            this.runningProfiles.set(profileId, { 
                 wsEndpoint: wsUrl, 
                 glInstance: GL 
             });
@@ -330,7 +395,7 @@ export class GoLoginClient {
             };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            console.error(`[GOLOGIN-CLIENT] Error starting profile ${id}:`, errorMessage);
+            console.error(`[GOLOGIN-CLIENT] Error starting local profile ${profileId}:`, errorMessage);
             return {
                 success: false,
                 wsEndpoint: '',
@@ -341,6 +406,9 @@ export class GoLoginClient {
 
     /**
      * Stop a running browser profile
+     * 
+     * In CLOUD MODE: Just removes from cache (cloud manages session)
+     * In LOCAL MODE: Stops the SDK instance
      * 
      * @param profileId - Profile ID to stop (uses default if not provided)
      * @returns Success status
@@ -363,8 +431,14 @@ export class GoLoginClient {
         try {
             console.log(`[GOLOGIN-CLIENT] Stopping profile: ${id}`);
             
-            // Stop using the SDK instance
-            await running.glInstance.stop();
+            // In cloud mode, we don't have a local SDK instance
+            // Just remove from cache - GoLogin cloud handles session cleanup
+            if (CLOUD_MODE || !running.glInstance) {
+                console.log(`[GOLOGIN-CLIENT] Cloud mode - removing from cache`);
+            } else {
+                // Local mode - stop using the SDK instance
+                await running.glInstance.stop();
+            }
             
             // Remove from running profiles cache
             this.runningProfiles.delete(id);
@@ -604,12 +678,17 @@ export class GoLoginClient {
         const v = await this.validateConfiguration();
         const lines = [
             '=== GoLogin Diagnostic Report ===',
+            `Mode: ${CLOUD_MODE ? 'CLOUD (serverless-compatible)' : 'LOCAL (requires display)'}`,
             `API Token: ${this.apiToken ? 'SET' : 'NOT SET'}`,
             `API Valid: ${v.apiTokenValid ? 'Yes' : 'No'}`,
             `Profile ID: ${this.profileId || 'NOT SET'}`,
             `Profile Exists: ${v.profileExists ? 'Yes' : 'No'}`,
-            `SDK: Using official gologin npm package`,
         ];
+        if (CLOUD_MODE) {
+            lines.push(`Cloud URL: ${GOLOGIN_CLOUD_WS_URL}`);
+        } else {
+            lines.push(`SDK: Using official gologin npm package`);
+        }
         if (v.profileInfo) {
             lines.push(`Profile Name: ${v.profileInfo.name}`);
             lines.push(`Has Proxy: ${v.profileInfo.hasProxy ? 'Yes' : 'No'}`);
