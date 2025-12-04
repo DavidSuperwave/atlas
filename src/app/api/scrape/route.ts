@@ -35,6 +35,16 @@ export async function POST(request: Request) {
     const scraperMode = getScraperMode();
     console.log(`[SCRAPE-API] Starting scrape with mode: ${scraperMode}`);
     
+    // Ensure queue processor is started when in GoLogin mode
+    if (scraperMode === 'gologin' && !scrapeQueue.isProcessorStarted()) {
+        console.log('[SCRAPE-API] Queue processor not started, starting now...');
+        try {
+            scrapeQueue.startProcessor();
+        } catch (error) {
+            console.error('[SCRAPE-API] Failed to start queue processor:', error);
+        }
+    }
+    
     try {
         // Auth check
         const user = await getCurrentUser();
@@ -154,7 +164,8 @@ export async function POST(request: Request) {
 }
 
 /**
- * Save leads using FAST batch insert (duplicates marked async)
+ * Save leads using upsert with ON CONFLICT DO NOTHING
+ * This allows new leads to be inserted while silently skipping duplicates
  */
 async function batchSaveLeads(scrapeId: string, userId: string, leads: { 
     first_name?: string; 
@@ -171,6 +182,8 @@ async function batchSaveLeads(scrapeId: string, userId: string, leads: {
     linkedin_url?: string;
 }[]): Promise<{ processedCount: number; errors: string[] }> {
     const errors: string[] = [];
+    let processedCount = 0;
+    let duplicateCount = 0;
     
     // Filter out invalid leads
     const validLeads = leads.filter(lead => lead.first_name?.trim() && lead.last_name?.trim());
@@ -179,7 +192,7 @@ async function batchSaveLeads(scrapeId: string, userId: string, leads: {
         return { processedCount: 0, errors: [] };
     }
 
-    // Prepare all leads for batch insert (NO duplicate check - that happens async)
+    // Prepare all leads for batch insert
     const leadsToInsert = validLeads.map(lead => ({
         scrape_id: scrapeId,
         user_id: userId,
@@ -197,30 +210,61 @@ async function batchSaveLeads(scrapeId: string, userId: string, leads: {
         verification_data: null,
         phone_numbers: lead.phone_numbers || [],
         linkedin_url: lead.linkedin_url?.trim() || null,
-        is_duplicate: false,  // Will be updated async
-        original_lead_id: null  // Will be updated async
+        is_duplicate: false,
+        original_lead_id: null
     }));
 
-    // SINGLE batch insert - much faster than individual inserts
-    console.log(`[SCRAPE-API] Batch inserting ${leadsToInsert.length} leads...`);
+    console.log(`[SCRAPE-API] Inserting ${leadsToInsert.length} leads with ON CONFLICT DO NOTHING...`);
+    
+    // Use upsert with ignoreDuplicates to handle the unique constraint
     const { data, error } = await supabase
         .from('leads')
-        .insert(leadsToInsert)
+        .upsert(leadsToInsert, {
+            onConflict: 'first_name,last_name,company_name',
+            ignoreDuplicates: true
+        })
         .select('id');
 
     if (error) {
-        console.error(`[SCRAPE-API] Batch insert error: ${error.message}`);
-        errors.push(`Batch insert failed: ${error.message}`);
-        return { processedCount: 0, errors };
+        console.error(`[SCRAPE-API] Upsert error: ${error.message}`);
+        errors.push(`Upsert failed: ${error.message}`);
+        
+        // Fallback to individual inserts
+        console.log('[SCRAPE-API] Falling back to individual inserts...');
+        for (const lead of leadsToInsert) {
+            try {
+                const { data: insertData, error: insertError } = await supabase
+                    .from('leads')
+                    .insert(lead)
+                    .select('id')
+                    .single();
+                
+                if (insertError) {
+                    if (insertError.code === '23505') { // Unique constraint violation
+                        duplicateCount++;
+                    } else {
+                        console.error(`[SCRAPE-API] Insert error: ${insertError.message}`);
+                    }
+                } else if (insertData) {
+                    processedCount++;
+                }
+            } catch (individualError) {
+                console.error(`[SCRAPE-API] Individual insert failed:`, individualError);
+            }
+        }
+        console.log(`[SCRAPE-API] Fallback complete: ${processedCount} inserted, ${duplicateCount} duplicates skipped`);
+    } else {
+        processedCount = data?.length || 0;
+        duplicateCount = leadsToInsert.length - processedCount;
+        console.log(`[SCRAPE-API] ✓ Upsert complete: ${processedCount} inserted, ${duplicateCount} duplicates skipped`);
     }
-
-    const processedCount = data?.length || 0;
-    console.log(`[SCRAPE-API] ✓ Batch inserted ${processedCount} leads`);
     
     // Trigger async duplicate marking (doesn't block the response)
-    markDuplicatesAsync(scrapeId).catch(err => {
-        console.error(`[SCRAPE-API] Async duplicate marking failed:`, err);
-    });
+    if (processedCount > 0) {
+        markDuplicatesAsync(scrapeId).catch(err => {
+            console.error(`[SCRAPE-API] Async duplicate marking failed:`, err);
+        });
+    }
 
     return { processedCount, errors };
 }

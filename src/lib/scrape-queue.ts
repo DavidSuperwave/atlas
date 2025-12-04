@@ -15,15 +15,41 @@
  * Similar to verification-queue.ts but for scrapes
  */
 
-import { createClient } from '@supabase/supabase-js';
-import { scrapeApollo } from './scraper-gologin';
-import { ScrapedLead } from './scraper-types';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import type { ScrapedLead } from './scraper-types';
 
-// Use service role client for queue operations
-const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+// Lazy-loaded scraper function to avoid module load issues
+let scrapeApolloFn: ((url: string, pages?: number, userId?: string) => Promise<ScrapedLead[]>) | null = null;
+
+async function getScrapeApollo() {
+    if (!scrapeApolloFn) {
+        const module = await import('./scraper-gologin');
+        scrapeApolloFn = module.scrapeApollo;
+    }
+    return scrapeApolloFn;
+}
+
+// Lazy-loaded Supabase client to avoid module load failures
+let supabaseClient: SupabaseClient | null = null;
+
+function getSupabase(): SupabaseClient {
+    if (!supabaseClient) {
+        const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+        
+        if (!url || !key) {
+            console.error('[SCRAPE-QUEUE] Missing Supabase environment variables:');
+            console.error(`  NEXT_PUBLIC_SUPABASE_URL: ${url ? '✓ set' : '✗ MISSING'}`);
+            console.error(`  SUPABASE_SERVICE_ROLE_KEY: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? '✓ set' : '✗ MISSING'}`);
+            console.error(`  NEXT_PUBLIC_SUPABASE_ANON_KEY: ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? '✓ set (fallback)' : '✗ MISSING'}`);
+            throw new Error('Supabase environment variables not configured');
+        }
+        
+        supabaseClient = createClient(url, key);
+        console.log('[SCRAPE-QUEUE] Supabase client initialized successfully');
+    }
+    return supabaseClient;
+}
 
 /** Queue polling interval in milliseconds */
 const POLL_INTERVAL = 3000; // 3 seconds
@@ -104,6 +130,49 @@ interface ScrapeRecord {
 type BrowserState = 'available' | 'manual_use' | 'scraping';
 
 /**
+ * Check if we're in GoLogin mode (case-insensitive)
+ */
+function isGoLoginMode(): boolean {
+    const mode = process.env.SCRAPER_MODE?.toLowerCase();
+    return mode === 'gologin';
+}
+
+/**
+ * Validate required environment variables
+ */
+export function validateEnvironment(): { valid: boolean; errors: string[]; warnings: string[] } {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    
+    // Check Supabase
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+        errors.push('NEXT_PUBLIC_SUPABASE_URL is not set');
+    }
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY && !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+        errors.push('Neither SUPABASE_SERVICE_ROLE_KEY nor NEXT_PUBLIC_SUPABASE_ANON_KEY is set');
+    }
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+        warnings.push('SUPABASE_SERVICE_ROLE_KEY not set, using NEXT_PUBLIC_SUPABASE_ANON_KEY as fallback');
+    }
+    
+    // Check GoLogin (if in gologin mode)
+    if (isGoLoginMode()) {
+        if (!process.env.GOLOGIN_API_TOKEN) {
+            errors.push('GOLOGIN_API_TOKEN is not set (required for gologin mode)');
+        }
+        if (!process.env.GOLOGIN_PROFILE_ID) {
+            warnings.push('GOLOGIN_PROFILE_ID not set, will use database profile assignments');
+        }
+    }
+    
+    return {
+        valid: errors.length === 0,
+        errors,
+        warnings
+    };
+}
+
+/**
  * Scrape Queue Manager
  * 
  * Handles sequential processing of scrape requests
@@ -112,9 +181,17 @@ class ScrapeQueue {
     private isProcessing = false;
     private processorInterval: ReturnType<typeof setInterval> | null = null;
     private currentScrapeId: string | null = null;
+    private processorStarted = false;
 
     constructor() {
         console.log('[SCRAPE-QUEUE] Queue manager initialized');
+    }
+
+    /**
+     * Check if the processor has been started
+     */
+    isProcessorStarted(): boolean {
+        return this.processorStarted;
     }
 
     /**
@@ -127,14 +204,35 @@ class ScrapeQueue {
             return;
         }
 
+        // Validate environment before starting
+        const { valid, errors, warnings } = validateEnvironment();
+        
+        if (warnings.length > 0) {
+            warnings.forEach(w => console.warn(`[SCRAPE-QUEUE] Warning: ${w}`));
+        }
+        
+        if (!valid) {
+            console.error('[SCRAPE-QUEUE] Cannot start processor - environment validation failed:');
+            errors.forEach(e => console.error(`  - ${e}`));
+            return;
+        }
+
         console.log('[SCRAPE-QUEUE] Starting queue processor...');
+        console.log(`[SCRAPE-QUEUE] SCRAPER_MODE: ${process.env.SCRAPER_MODE || '(not set)'}`);
+        console.log(`[SCRAPE-QUEUE] Is GoLogin mode: ${isGoLoginMode()}`);
+        
+        this.processorStarted = true;
         
         // Process immediately on start
-        this.processNext();
+        this.processNext().catch(err => {
+            console.error('[SCRAPE-QUEUE] Error in initial processNext:', err);
+        });
 
         // Then poll regularly
         this.processorInterval = setInterval(() => {
-            this.processNext();
+            this.processNext().catch(err => {
+                console.error('[SCRAPE-QUEUE] Error in processNext:', err);
+            });
         }, POLL_INTERVAL);
 
         console.log(`[SCRAPE-QUEUE] Processor started (polling every ${POLL_INTERVAL}ms)`);
@@ -147,6 +245,7 @@ class ScrapeQueue {
         if (this.processorInterval) {
             clearInterval(this.processorInterval);
             this.processorInterval = null;
+            this.processorStarted = false;
             console.log('[SCRAPE-QUEUE] Processor stopped');
         }
     }
@@ -155,6 +254,7 @@ class ScrapeQueue {
      * Check if the browser is available for scraping
      */
     async getBrowserState(): Promise<{ state: BrowserState; session?: { user_id: string; session_type: string } }> {
+        const supabase = getSupabase();
         const { data: activeSession } = await supabase
             .from('browser_sessions')
             .select('*')
@@ -200,6 +300,7 @@ class ScrapeQueue {
      * Get the next pending scrape from the queue
      */
     async getNextPendingScrape(): Promise<ScrapeQueueItem | null> {
+        const supabase = getSupabase();
         const { data, error } = await supabase
             .from('scrape_queue')
             .select('*')
@@ -220,6 +321,7 @@ class ScrapeQueue {
      * Get scrape details
      */
     async getScrapeDetails(scrapeId: string): Promise<ScrapeRecord | null> {
+        const supabase = getSupabase();
         const { data, error } = await supabase
             .from('scrapes')
             .select('*')
@@ -243,6 +345,8 @@ class ScrapeQueue {
         }
 
         try {
+            const supabase = getSupabase();
+            
             // Check browser availability
             const { state } = await this.getBrowserState();
             if (state !== 'available') {
@@ -300,12 +404,13 @@ class ScrapeQueue {
             // Extract pages from URL or default to 1
             const pages = 1; // Could parse from filters if needed
 
-            // Run the scraper
+            // Run the scraper (lazy load to avoid module issues)
             console.log(`[SCRAPE-QUEUE] Starting scraper for URL: ${scrapeDetails.url}`);
+            const scrapeApollo = await getScrapeApollo();
             const leads = await scrapeApollo(scrapeDetails.url, pages, nextItem.user_id);
 
             // Save leads to database
-            const { processedCount, errors } = await this.saveLeads(
+            const { processedCount, duplicateCount, errors } = await this.saveLeads(
                 nextItem.scrape_id, 
                 nextItem.user_id, 
                 leads
@@ -342,41 +447,49 @@ class ScrapeQueue {
                     .eq('id', session.id);
             }
 
-            console.log(`[SCRAPE-QUEUE] ✓ Scrape completed: ${processedCount} leads saved`);
+            console.log(`[SCRAPE-QUEUE] ✓ Scrape completed: ${processedCount} leads saved, ${duplicateCount} duplicates skipped`);
 
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             console.error(`[SCRAPE-QUEUE] Scrape failed:`, errorMessage);
+            if (error instanceof Error && error.stack) {
+                console.error(`[SCRAPE-QUEUE] Stack trace:`, error.stack);
+            }
 
             // Update queue status to failed
             if (this.currentScrapeId) {
-                await supabase
-                    .from('scrape_queue')
-                    .update({ 
-                        status: 'failed', 
-                        completed_at: new Date().toISOString(),
-                        error_message: errorMessage
-                    })
-                    .eq('scrape_id', this.currentScrapeId);
+                try {
+                    const supabase = getSupabase();
+                    await supabase
+                        .from('scrape_queue')
+                        .update({ 
+                            status: 'failed', 
+                            completed_at: new Date().toISOString(),
+                            error_message: errorMessage
+                        })
+                        .eq('scrape_id', this.currentScrapeId);
 
-                // Update scrape status to failed
-                await supabase
-                    .from('scrapes')
-                    .update({ 
-                        status: 'failed',
-                        error_details: { message: errorMessage, timestamp: new Date().toISOString() }
-                    })
-                    .eq('id', this.currentScrapeId);
+                    // Update scrape status to failed
+                    await supabase
+                        .from('scrapes')
+                        .update({ 
+                            status: 'failed',
+                            error_details: { message: errorMessage, timestamp: new Date().toISOString() }
+                        })
+                        .eq('id', this.currentScrapeId);
 
-                // Close any active browser session for this scrape
-                await supabase
-                    .from('browser_sessions')
-                    .update({ 
-                        status: 'error', 
-                        ended_at: new Date().toISOString() 
-                    })
-                    .eq('scrape_id', this.currentScrapeId)
-                    .eq('status', 'active');
+                    // Close any active browser session for this scrape
+                    await supabase
+                        .from('browser_sessions')
+                        .update({ 
+                            status: 'error', 
+                            ended_at: new Date().toISOString() 
+                        })
+                        .eq('scrape_id', this.currentScrapeId)
+                        .eq('status', 'active');
+                } catch (updateError) {
+                    console.error('[SCRAPE-QUEUE] Failed to update status after error:', updateError);
+                }
             }
 
         } finally {
@@ -386,12 +499,13 @@ class ScrapeQueue {
     }
 
     /**
-     * Save leads to database using FAST batch insert
-     * Duplicates are marked asynchronously AFTER insert to avoid blocking
+     * Save leads to database using upsert with ON CONFLICT DO NOTHING
+     * This allows new leads to be inserted while silently skipping duplicates
      */
     async saveLeads(scrapeId: string, userId: string, leads: ScrapedLead[]): Promise<{ processedCount: number; duplicateCount: number; errors: string[] }> {
         const errors: string[] = [];
         let processedCount = 0;
+        let duplicateCount = 0;
 
         // Filter out invalid leads
         const validLeads = leads.filter(lead => {
@@ -405,7 +519,7 @@ class ScrapeQueue {
             return { processedCount: 0, duplicateCount: 0, errors: [] };
         }
 
-        // Prepare all leads for batch insert (NO duplicate check - that happens async)
+        // Prepare all leads for batch insert
         const leadsToInsert = validLeads.map(lead => ({
             scrape_id: scrapeId,
             user_id: userId,
@@ -423,31 +537,66 @@ class ScrapeQueue {
             verification_data: null,
             phone_numbers: lead.phone_numbers || [],
             linkedin_url: lead.linkedin_url?.trim() || null,
-            is_duplicate: false,  // Will be updated async
-            original_lead_id: null  // Will be updated async
+            is_duplicate: false,
+            original_lead_id: null
         }));
 
-        // SINGLE batch insert - much faster than individual inserts
-        console.log(`[SCRAPE-QUEUE] Batch inserting ${leadsToInsert.length} leads...`);
+        console.log(`[SCRAPE-QUEUE] Inserting ${leadsToInsert.length} leads with ON CONFLICT DO NOTHING...`);
+        
+        const supabase = getSupabase();
+        
+        // Use upsert with ignoreDuplicates to handle the unique constraint
+        // This will insert new records and skip duplicates silently
         const { data, error } = await supabase
             .from('leads')
-            .insert(leadsToInsert)
+            .upsert(leadsToInsert, {
+                onConflict: 'first_name,last_name,company_name',
+                ignoreDuplicates: true
+            })
             .select('id');
 
         if (error) {
-            console.error(`[SCRAPE-QUEUE] Batch insert error: ${error.message}`);
-            errors.push(`Batch insert failed: ${error.message}`);
+            console.error(`[SCRAPE-QUEUE] Upsert error: ${error.message}`);
+            errors.push(`Upsert failed: ${error.message}`);
+            
+            // If upsert fails, try individual inserts with ON CONFLICT handling
+            console.log('[SCRAPE-QUEUE] Falling back to individual inserts...');
+            for (const lead of leadsToInsert) {
+                try {
+                    const { data: insertData, error: insertError } = await supabase
+                        .from('leads')
+                        .insert(lead)
+                        .select('id')
+                        .single();
+                    
+                    if (insertError) {
+                        if (insertError.code === '23505') { // Unique constraint violation
+                            duplicateCount++;
+                        } else {
+                            console.error(`[SCRAPE-QUEUE] Insert error for ${lead.first_name} ${lead.last_name}: ${insertError.message}`);
+                        }
+                    } else if (insertData) {
+                        processedCount++;
+                    }
+                } catch (individualError) {
+                    console.error(`[SCRAPE-QUEUE] Individual insert failed:`, individualError);
+                }
+            }
+            console.log(`[SCRAPE-QUEUE] Fallback complete: ${processedCount} inserted, ${duplicateCount} duplicates`);
         } else {
             processedCount = data?.length || 0;
-            console.log(`[SCRAPE-QUEUE] ✓ Batch inserted ${processedCount} leads`);
-            
-            // Trigger async duplicate marking (doesn't block the user)
+            duplicateCount = leadsToInsert.length - processedCount;
+            console.log(`[SCRAPE-QUEUE] ✓ Upsert complete: ${processedCount} inserted, ${duplicateCount} duplicates skipped`);
+        }
+        
+        // Trigger async duplicate marking for the inserted leads (to link them to existing duplicates)
+        if (processedCount > 0) {
             this.markDuplicatesAsync(scrapeId).catch(err => {
                 console.error(`[SCRAPE-QUEUE] Async duplicate marking failed:`, err);
             });
         }
 
-        return { processedCount, duplicateCount: 0, errors };
+        return { processedCount, duplicateCount, errors };
     }
 
     /**
@@ -458,6 +607,8 @@ class ScrapeQueue {
         console.log(`[SCRAPE-QUEUE] Starting async duplicate marking for scrape ${scrapeId}...`);
         
         try {
+            const supabase = getSupabase();
+            
             // Get all leads from this scrape
             const { data: scrapeLeads, error: fetchError } = await supabase
                 .from('leads')
@@ -514,6 +665,8 @@ class ScrapeQueue {
         error?: string;
     }> {
         try {
+            const supabase = getSupabase();
+            
             // Check browser state
             const { state } = await this.getBrowserState();
 
@@ -569,6 +722,7 @@ class ScrapeQueue {
         estimatedCompletionTime?: string;
         timeEstimateFormatted?: string;
     }> {
+        const supabase = getSupabase();
         const { data, error } = await supabase
             .from('scrape_queue')
             .select('*')
@@ -640,16 +794,50 @@ class ScrapeQueue {
     getCurrentScrapeId(): string | null {
         return this.currentScrapeId;
     }
+
+    /**
+     * Get processor status for health checks
+     */
+    getStatus(): {
+        processorStarted: boolean;
+        isProcessing: boolean;
+        currentScrapeId: string | null;
+        isGoLoginMode: boolean;
+        scraperMode: string;
+    } {
+        return {
+            processorStarted: this.processorStarted,
+            isProcessing: this.isProcessing,
+            currentScrapeId: this.currentScrapeId,
+            isGoLoginMode: isGoLoginMode(),
+            scraperMode: process.env.SCRAPER_MODE || 'local'
+        };
+    }
 }
 
 // Export singleton instance
 export const scrapeQueue = new ScrapeQueue();
 
 // Auto-start processor when imported (for Railway)
-if (typeof process !== 'undefined' && process.env.SCRAPER_MODE === 'gologin') {
+// Uses case-insensitive check and proper error handling
+console.log('[SCRAPE-QUEUE] Module loaded');
+console.log(`[SCRAPE-QUEUE] SCRAPER_MODE: ${process.env.SCRAPER_MODE || '(not set)'}`);
+console.log(`[SCRAPE-QUEUE] Is GoLogin mode: ${isGoLoginMode()}`);
+
+if (typeof process !== 'undefined' && isGoLoginMode()) {
+    console.log('[SCRAPE-QUEUE] GoLogin mode detected, scheduling processor start...');
     // Delay start slightly to allow for initialization
     setTimeout(() => {
-        scrapeQueue.startProcessor();
+        try {
+            console.log('[SCRAPE-QUEUE] Auto-starting processor...');
+            scrapeQueue.startProcessor();
+        } catch (error) {
+            console.error('[SCRAPE-QUEUE] Failed to auto-start processor:', error);
+            if (error instanceof Error && error.stack) {
+                console.error('[SCRAPE-QUEUE] Stack trace:', error.stack);
+            }
+        }
     }, 5000);
+} else {
+    console.log('[SCRAPE-QUEUE] Not in GoLogin mode, processor will not auto-start');
 }
-
