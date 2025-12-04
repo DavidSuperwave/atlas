@@ -22,14 +22,10 @@ export default function Sidebar() {
   const [creditsLoading, setCreditsLoading] = useState(true);
   const [mounted, setMounted] = useState(false);
 
+  // ALL HOOKS MUST BE CALLED BEFORE ANY CONDITIONAL RETURNS
   useEffect(() => {
     setMounted(true);
   }, []);
-
-  // Hide sidebar on public routes (but only after mount to prevent hydration mismatch)
-  if (mounted && PUBLIC_ROUTES.some(route => pathname?.startsWith(route))) {
-    return null;
-  }
 
   // Check if user is admin
   useEffect(() => {
@@ -81,6 +77,12 @@ export default function Sidebar() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // Hide sidebar on public routes (AFTER all hooks)
+  // Only check after mount to prevent hydration mismatch
+  if (mounted && PUBLIC_ROUTES.some(route => pathname?.startsWith(route))) {
+    return null;
+  }
 
   const isActive = (path: string) => {
     if (path === '/dashboard' && pathname === '/dashboard') return true;
@@ -237,12 +239,6 @@ export default function Sidebar() {
       )
     }
   ];
-
-  // Don't show sidebar on public pages
-  const publicPages = ['/', '/login', '/signup', '/invite'];
-  if (publicPages.some(page => pathname === page || pathname.startsWith('/invite'))) {
-    return null;
-  }
 
   return (
     <div 
