@@ -292,7 +292,19 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
         await page.setViewport({ width: 1366, height: 768 });
 
         console.log(`[GOLOGIN-SCRAPER] Navigating to: ${url}`);
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: SCRAPE_TIMEOUT });
+        
+        // Use 'load' instead of 'networkidle2' - Apollo keeps making requests so networkidle2 may never fire
+        try {
+            await page.goto(url, { waitUntil: 'load', timeout: 60000 });
+        } catch (navError) {
+            // If initial navigation fails, try with domcontentloaded
+            console.log('[GOLOGIN-SCRAPER] Initial navigation slow, trying domcontentloaded...');
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        }
+        
+        // Wait for page to stabilize after navigation
+        console.log('[GOLOGIN-SCRAPER] Waiting for page to stabilize...');
+        await humanDelay(5000, 7000);
 
         // Check for Cloudflare challenge
         const pageContent = await page.content();
@@ -300,11 +312,17 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
             console.log('[GOLOGIN-SCRAPER] WARNING: Cloudflare challenge detected. Waiting...');
             await humanDelay(5000, 10000);
             // Re-navigate after challenge
-            await page.goto(url, { waitUntil: 'networkidle2', timeout: SCRAPE_TIMEOUT });
+            await page.goto(url, { waitUntil: 'load', timeout: 60000 });
+            await humanDelay(5000, 7000);
         }
 
-        // Initial wait for page to fully render
-        await humanDelay(2000, 3000);
+        // Check if we're on the right page
+        const currentUrl = page.url();
+        console.log(`[GOLOGIN-SCRAPER] Current URL after navigation: ${currentUrl}`);
+        
+        if (currentUrl.includes('/login') || currentUrl.includes('/sign')) {
+            throw new Error('Not logged into Apollo. Please log in using the GoLogin browser profile.');
+        }
 
         for (let currentPage = 1; currentPage <= pages; currentPage++) {
             console.log(`[GOLOGIN-SCRAPER] Processing page ${currentPage}/${pages}...`);

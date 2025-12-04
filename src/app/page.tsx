@@ -1,9 +1,160 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 
 const REDACTED_WORDS = ['Redacted', 'Private', 'Secure', 'Exclusive'];
+
+// Rotating Wireframe Globe Component with true 3D rotation effect
+function WireframeGlobe() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const animationRef = useRef<number>(0);
+  const rotationRef = useRef(0);
+  
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // High DPI support
+    const dpr = window.devicePixelRatio || 1;
+    const size = 320;
+    canvas.width = size * dpr;
+    canvas.height = size * dpr;
+    canvas.style.width = `${size}px`;
+    canvas.style.height = `${size}px`;
+    ctx.scale(dpr, dpr);
+    
+    const cx = size / 2;
+    const cy = size / 2;
+    const radius = 140;
+    
+    // Tilt angle (like in the reference image - tilted forward)
+    const tiltAngle = 23.5 * (Math.PI / 180); // Earth's actual tilt
+    
+    ctx.clearRect(0, 0, size, size);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.lineWidth = 1.2;
+    
+    // Draw outer circle (sphere outline)
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    
+    // Draw latitude lines (horizontal circles when tilted)
+    const latitudes = [-75, -60, -45, -30, -15, 0, 15, 30, 45, 60, 75];
+    
+    for (const lat of latitudes) {
+      const latRad = lat * (Math.PI / 180);
+      const y = Math.sin(latRad) * radius;
+      const r = Math.cos(latRad) * radius;
+      
+      // Apply tilt transformation
+      const tiltedY = y * Math.cos(tiltAngle);
+      const tiltedZ = y * Math.sin(tiltAngle);
+      
+      // Project to 2D (orthographic projection)
+      const projectedY = cy - tiltedY;
+      const ellipseHeight = Math.abs(r * Math.sin(tiltAngle));
+      
+      // Adjust opacity based on visibility
+      const visibility = Math.cos(latRad);
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.3 + visibility * 0.3})`;
+      
+      ctx.beginPath();
+      ctx.ellipse(cx, projectedY, r, ellipseHeight, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    
+    // Draw longitude lines (meridians) - these rotate!
+    const meridianCount = 18;
+    const rotation = rotationRef.current;
+    
+    for (let i = 0; i < meridianCount; i++) {
+      const baseLon = (i * 180) / meridianCount;
+      const lon = (baseLon + rotation) % 360;
+      const lonRad = lon * (Math.PI / 180);
+      
+      // Calculate the apparent width of the ellipse based on longitude
+      const apparentWidth = radius * Math.sin(lonRad);
+      
+      // Determine if this meridian is on the front or back of the globe
+      const isBack = Math.cos(lonRad) < 0;
+      
+      ctx.strokeStyle = isBack 
+        ? 'rgba(255, 255, 255, 0.15)' 
+        : `rgba(255, 255, 255, ${0.4 + Math.abs(Math.sin(lonRad)) * 0.4})`;
+      
+      ctx.beginPath();
+      
+      // Draw meridian as points along the line from pole to pole
+      const segments = 60;
+      for (let j = 0; j <= segments; j++) {
+        const lat = (j / segments) * Math.PI - Math.PI / 2; // -90 to 90 degrees
+        
+        // 3D coordinates on sphere
+        const x3d = radius * Math.cos(lat) * Math.sin(lonRad);
+        const y3d = radius * Math.sin(lat);
+        const z3d = radius * Math.cos(lat) * Math.cos(lonRad);
+        
+        // Apply tilt rotation around X axis
+        const y3dTilted = y3d * Math.cos(tiltAngle) - z3d * Math.sin(tiltAngle);
+        const z3dTilted = y3d * Math.sin(tiltAngle) + z3d * Math.cos(tiltAngle);
+        
+        // Project to 2D (orthographic)
+        const x2d = cx + x3d;
+        const y2d = cy - y3dTilted;
+        
+        if (j === 0) {
+          ctx.moveTo(x2d, y2d);
+        } else {
+          ctx.lineTo(x2d, y2d);
+        }
+      }
+      ctx.stroke();
+    }
+    
+    // Update rotation
+    rotationRef.current = (rotation + 0.3) % 360;
+    
+    // Continue animation
+    animationRef.current = requestAnimationFrame(draw);
+  }, []);
+  
+  useEffect(() => {
+    draw();
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [draw]);
+
+  return (
+    <div className="globe-container">
+      <canvas
+        ref={canvasRef}
+        className="globe-canvas"
+      />
+      <style jsx>{`
+        .globe-container {
+          width: 320px;
+          height: 320px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        
+        .globe-canvas {
+          width: 320px;
+          height: 320px;
+        }
+      `}</style>
+    </div>
+  );
+}
 
 export default function LandingPage() {
   const [showForm, setShowForm] = useState(false);
@@ -90,141 +241,9 @@ export default function LandingPage() {
 
       {/* Main content */}
       <main className="relative z-10 flex flex-col items-center justify-center px-6 py-12 text-center max-w-5xl mx-auto">
-        {/* Animated Globe Icon with Communication Lines */}
+        {/* Rotating Wireframe Globe */}
         <div className={`mb-12 transition-all duration-1000 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
-          <div className="relative w-32 h-32 mx-auto">
-            <svg
-              viewBox="0 0 120 120"
-              className="w-full h-full"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            >
-              {/* Globe base */}
-              <circle cx="60" cy="60" r="50" className="text-white opacity-20" />
-              
-              {/* Animated communication lines */}
-              <g className="text-zinc-400">
-                {/* Line 1 */}
-                <line
-                  x1="20"
-                  y1="30"
-                  x2="100"
-                  y2="90"
-                  className="animate-pulse opacity-60"
-                  strokeDasharray="4 4"
-                >
-                  <animate
-                    attributeName="stroke-dashoffset"
-                    values="0;8"
-                    dur="2s"
-                    repeatCount="indefinite"
-                  />
-                </line>
-                
-                {/* Line 2 */}
-                <line
-                  x1="100"
-                  y1="30"
-                  x2="20"
-                  y2="90"
-                  className="animate-pulse opacity-60"
-                  strokeDasharray="4 4"
-                >
-                  <animate
-                    attributeName="stroke-dashoffset"
-                    values="0;8"
-                    dur="2.5s"
-                    repeatCount="indefinite"
-                  />
-                </line>
-                
-                {/* Line 3 */}
-                <line
-                  x1="60"
-                  y1="10"
-                  x2="60"
-                  y2="110"
-                  className="animate-pulse opacity-40"
-                  strokeDasharray="3 3"
-                >
-                  <animate
-                    attributeName="stroke-dashoffset"
-                    values="0;6"
-                    dur="1.8s"
-                    repeatCount="indefinite"
-                  />
-                </line>
-                
-                {/* Line 4 */}
-                <line
-                  x1="10"
-                  y1="60"
-                  x2="110"
-                  y2="60"
-                  className="animate-pulse opacity-40"
-                  strokeDasharray="3 3"
-                >
-                  <animate
-                    attributeName="stroke-dashoffset"
-                    values="0;6"
-                    dur="2.2s"
-                    repeatCount="indefinite"
-                  />
-                </line>
-                
-                {/* Diagonal lines */}
-                <line
-                  x1="30"
-                  y1="15"
-                  x2="90"
-                  y2="105"
-                  className="animate-pulse opacity-30"
-                  strokeDasharray="2 2"
-                >
-                  <animate
-                    attributeName="stroke-dashoffset"
-                    values="0;4"
-                    dur="2.8s"
-                    repeatCount="indefinite"
-                  />
-                </line>
-                
-                <line
-                  x1="90"
-                  y1="15"
-                  x2="30"
-                  y2="105"
-                  className="animate-pulse opacity-30"
-                  strokeDasharray="2 2"
-                >
-                  <animate
-                    attributeName="stroke-dashoffset"
-                    values="0;4"
-                    dur="3s"
-                    repeatCount="indefinite"
-                  />
-                </line>
-              </g>
-              
-              {/* Globe structure */}
-              <circle cx="60" cy="60" r="50" className="text-white opacity-30" />
-              <ellipse cx="60" cy="60" rx="50" ry="20" className="text-white opacity-20" />
-              <ellipse cx="60" cy="60" rx="20" ry="50" className="text-white opacity-20" />
-              <ellipse cx="60" cy="45" rx="42" ry="12" className="text-white opacity-15" />
-              <ellipse cx="60" cy="75" rx="42" ry="12" className="text-white opacity-15" />
-              
-              {/* Connection points */}
-              <circle cx="20" cy="30" r="2" className="text-zinc-400 animate-pulse" fill="currentColor" />
-              <circle cx="100" cy="30" r="2" className="text-zinc-400 animate-pulse" fill="currentColor" />
-              <circle cx="100" cy="90" r="2" className="text-zinc-400 animate-pulse" fill="currentColor" />
-              <circle cx="20" cy="90" r="2" className="text-zinc-400 animate-pulse" fill="currentColor" />
-              <circle cx="60" cy="10" r="2" className="text-zinc-400 animate-pulse" fill="currentColor" />
-              <circle cx="60" cy="110" r="2" className="text-zinc-400 animate-pulse" fill="currentColor" />
-              <circle cx="10" cy="60" r="2" className="text-zinc-400 animate-pulse" fill="currentColor" />
-              <circle cx="110" cy="60" r="2" className="text-zinc-400 animate-pulse" fill="currentColor" />
-            </svg>
-          </div>
+          <WireframeGlobe />
         </div>
 
         {/* Heading */}
