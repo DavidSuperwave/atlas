@@ -385,6 +385,61 @@ export class VerificationQueue {
             console.error(`[WORKER-${worker.id}] Error updating lead in DB:`, error);
         } else {
             console.log(`[WORKER-${worker.id}] Lead ${item.leadId} updated: ${bestStatus} (${checkedPerms.length} checked)`);
+            
+            // EMAIL-BASED DUPLICATE DETECTION
+            // Only check for duplicates when email is VALID (not catchall/invalid)
+            // No point checking invalid emails - they're not usable anyway
+            if (bestResult?.email && bestStatus === 'valid') {
+                await this.checkEmailDuplicate(item.leadId!, bestResult.email, worker.id);
+            }
+        }
+    }
+
+    /**
+     * Check if the enriched email already exists in another lead
+     * If so, mark this lead as a duplicate
+     * 
+     * This is more accurate than name-based duplicate detection because:
+     * - Names aren't unique ("John Smith" could be different people)
+     * - Email IS unique and definitive
+     */
+    private async checkEmailDuplicate(leadId: string, email: string, workerId: number): Promise<void> {
+        try {
+            // Find any existing lead with this email that was created BEFORE this one
+            const { data: currentLead } = await supabase
+                .from('leads')
+                .select('created_at')
+                .eq('id', leadId)
+                .single();
+
+            if (!currentLead) return;
+
+            const { data: existingLead } = await supabase
+                .from('leads')
+                .select('id, email, first_name, last_name, company_name')
+                .eq('email', email)
+                .lt('created_at', currentLead.created_at) // Only older leads
+                .neq('id', leadId) // Not itself
+                .limit(1)
+                .single();
+
+            if (existingLead) {
+                // Mark this lead as a duplicate
+                const { error } = await supabase
+                    .from('leads')
+                    .update({
+                        is_duplicate: true,
+                        original_lead_id: existingLead.id
+                    })
+                    .eq('id', leadId);
+
+                if (!error) {
+                    console.log(`[WORKER-${workerId}] ✓ Email duplicate detected: ${email} (original: ${existingLead.id})`);
+                }
+            }
+        } catch (error) {
+            // Don't fail the enrichment if duplicate check fails
+            console.error(`[WORKER-${workerId}] Error checking email duplicate:`, error);
         }
     }
 

@@ -499,13 +499,13 @@ class ScrapeQueue {
     }
 
     /**
-     * Save leads to database using upsert with ON CONFLICT DO NOTHING
-     * This allows new leads to be inserted while silently skipping duplicates
+     * Save leads to database - simple batch insert
+     * 
+     * No name-based duplicate checking - duplicates are detected by EMAIL
+     * after enrichment (more accurate since names aren't unique identifiers)
      */
     async saveLeads(scrapeId: string, userId: string, leads: ScrapedLead[]): Promise<{ processedCount: number; duplicateCount: number; errors: string[] }> {
         const errors: string[] = [];
-        let processedCount = 0;
-        let duplicateCount = 0;
 
         // Filter out invalid leads
         const validLeads = leads.filter(lead => {
@@ -541,117 +541,47 @@ class ScrapeQueue {
             original_lead_id: null
         }));
 
-        console.log(`[SCRAPE-QUEUE] Inserting ${leadsToInsert.length} leads with ON CONFLICT DO NOTHING...`);
+        console.log(`[SCRAPE-QUEUE] Inserting ${leadsToInsert.length} leads...`);
         
         const supabase = getSupabase();
         
-        // Use upsert with ignoreDuplicates to handle the unique constraint
-        // This will insert new records and skip duplicates silently
+        // Simple batch insert - no duplicate checking at this stage
+        // Duplicates will be detected by EMAIL after enrichment
         const { data, error } = await supabase
             .from('leads')
-            .upsert(leadsToInsert, {
-                onConflict: 'first_name,last_name,company_name',
-                ignoreDuplicates: true
-            })
+            .insert(leadsToInsert)
             .select('id');
 
         if (error) {
-            console.error(`[SCRAPE-QUEUE] Upsert error: ${error.message}`);
-            errors.push(`Upsert failed: ${error.message}`);
+            console.error(`[SCRAPE-QUEUE] Batch insert error: ${error.message}`);
+            errors.push(`Insert failed: ${error.message}`);
             
-            // If upsert fails, try individual inserts with ON CONFLICT handling
+            // If batch fails, try individual inserts
             console.log('[SCRAPE-QUEUE] Falling back to individual inserts...');
+            let processedCount = 0;
             for (const lead of leadsToInsert) {
                 try {
-                    const { data: insertData, error: insertError } = await supabase
+                    const { error: insertError } = await supabase
                         .from('leads')
-                        .insert(lead)
-                        .select('id')
-                        .single();
+                        .insert(lead);
                     
-                    if (insertError) {
-                        if (insertError.code === '23505') { // Unique constraint violation
-                            duplicateCount++;
-                        } else {
-                            console.error(`[SCRAPE-QUEUE] Insert error for ${lead.first_name} ${lead.last_name}: ${insertError.message}`);
-                        }
-                    } else if (insertData) {
+                    if (!insertError) {
                         processedCount++;
+                    } else {
+                        console.error(`[SCRAPE-QUEUE] Insert error for ${lead.first_name} ${lead.last_name}: ${insertError.message}`);
                     }
                 } catch (individualError) {
                     console.error(`[SCRAPE-QUEUE] Individual insert failed:`, individualError);
                 }
             }
-            console.log(`[SCRAPE-QUEUE] Fallback complete: ${processedCount} inserted, ${duplicateCount} duplicates`);
-        } else {
-            processedCount = data?.length || 0;
-            duplicateCount = leadsToInsert.length - processedCount;
-            console.log(`[SCRAPE-QUEUE] ✓ Upsert complete: ${processedCount} inserted, ${duplicateCount} duplicates skipped`);
-        }
-        
-        // Trigger async duplicate marking for the inserted leads (to link them to existing duplicates)
-        if (processedCount > 0) {
-            this.markDuplicatesAsync(scrapeId).catch(err => {
-                console.error(`[SCRAPE-QUEUE] Async duplicate marking failed:`, err);
-            });
+            console.log(`[SCRAPE-QUEUE] Fallback complete: ${processedCount}/${leadsToInsert.length} inserted`);
+            return { processedCount, duplicateCount: 0, errors };
         }
 
-        return { processedCount, duplicateCount, errors };
-    }
+        const processedCount = data?.length || 0;
+        console.log(`[SCRAPE-QUEUE] ✓ Batch insert complete: ${processedCount} leads saved`);
 
-    /**
-     * Mark duplicates asynchronously AFTER leads are saved
-     * This runs in the background and doesn't block the scrape
-     */
-    async markDuplicatesAsync(scrapeId: string): Promise<void> {
-        console.log(`[SCRAPE-QUEUE] Starting async duplicate marking for scrape ${scrapeId}...`);
-        
-        try {
-            const supabase = getSupabase();
-            
-            // Get all leads from this scrape
-            const { data: scrapeLeads, error: fetchError } = await supabase
-                .from('leads')
-                .select('id, first_name, last_name, company_name, created_at')
-                .eq('scrape_id', scrapeId);
-
-            if (fetchError || !scrapeLeads) {
-                console.error(`[SCRAPE-QUEUE] Failed to fetch leads for duplicate check:`, fetchError);
-                return;
-            }
-
-            let duplicateCount = 0;
-
-            // For each lead in this scrape, check if an older lead exists with same name/company
-            for (const lead of scrapeLeads) {
-                const { data: existingLead } = await supabase
-                    .from('leads')
-                    .select('id')
-                    .ilike('first_name', lead.first_name || '')
-                    .ilike('last_name', lead.last_name || '')
-                    .ilike('company_name', lead.company_name || '')
-                    .lt('created_at', lead.created_at)  // Only older leads
-                    .neq('id', lead.id)  // Not itself
-                    .limit(1)
-                    .single();
-
-                if (existingLead) {
-                    // Mark as duplicate
-                    await supabase
-                        .from('leads')
-                        .update({ 
-                            is_duplicate: true, 
-                            original_lead_id: existingLead.id 
-                        })
-                        .eq('id', lead.id);
-                    duplicateCount++;
-                }
-            }
-
-            console.log(`[SCRAPE-QUEUE] ✓ Async duplicate marking complete: ${duplicateCount} duplicates found`);
-        } catch (error) {
-            console.error(`[SCRAPE-QUEUE] Error in async duplicate marking:`, error);
-        }
+        return { processedCount, duplicateCount: 0, errors };
     }
 
     /**

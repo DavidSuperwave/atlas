@@ -164,8 +164,10 @@ export async function POST(request: Request) {
 }
 
 /**
- * Save leads using upsert with ON CONFLICT DO NOTHING
- * This allows new leads to be inserted while silently skipping duplicates
+ * Save leads using simple batch insert
+ * 
+ * No name-based duplicate checking - duplicates are detected by EMAIL
+ * after enrichment (more accurate since names aren't unique identifiers)
  */
 async function batchSaveLeads(scrapeId: string, userId: string, leads: { 
     first_name?: string; 
@@ -182,8 +184,6 @@ async function batchSaveLeads(scrapeId: string, userId: string, leads: {
     linkedin_url?: string;
 }[]): Promise<{ processedCount: number; errors: string[] }> {
     const errors: string[] = [];
-    let processedCount = 0;
-    let duplicateCount = 0;
     
     // Filter out invalid leads
     const validLeads = leads.filter(lead => lead.first_name?.trim() && lead.last_name?.trim());
@@ -214,109 +214,43 @@ async function batchSaveLeads(scrapeId: string, userId: string, leads: {
         original_lead_id: null
     }));
 
-    console.log(`[SCRAPE-API] Inserting ${leadsToInsert.length} leads with ON CONFLICT DO NOTHING...`);
+    console.log(`[SCRAPE-API] Inserting ${leadsToInsert.length} leads...`);
     
-    // Use upsert with ignoreDuplicates to handle the unique constraint
+    // Simple batch insert - no duplicate checking at this stage
+    // Duplicates will be detected by EMAIL after enrichment
     const { data, error } = await supabase
         .from('leads')
-        .upsert(leadsToInsert, {
-            onConflict: 'first_name,last_name,company_name',
-            ignoreDuplicates: true
-        })
+        .insert(leadsToInsert)
         .select('id');
 
     if (error) {
-        console.error(`[SCRAPE-API] Upsert error: ${error.message}`);
-        errors.push(`Upsert failed: ${error.message}`);
+        console.error(`[SCRAPE-API] Batch insert error: ${error.message}`);
+        errors.push(`Insert failed: ${error.message}`);
         
         // Fallback to individual inserts
         console.log('[SCRAPE-API] Falling back to individual inserts...');
+        let processedCount = 0;
         for (const lead of leadsToInsert) {
             try {
-                const { data: insertData, error: insertError } = await supabase
+                const { error: insertError } = await supabase
                     .from('leads')
-                    .insert(lead)
-                    .select('id')
-                    .single();
+                    .insert(lead);
                 
-                if (insertError) {
-                    if (insertError.code === '23505') { // Unique constraint violation
-                        duplicateCount++;
-                    } else {
-                        console.error(`[SCRAPE-API] Insert error: ${insertError.message}`);
-                    }
-                } else if (insertData) {
+                if (!insertError) {
                     processedCount++;
+                } else {
+                    console.error(`[SCRAPE-API] Insert error: ${insertError.message}`);
                 }
             } catch (individualError) {
                 console.error(`[SCRAPE-API] Individual insert failed:`, individualError);
             }
         }
-        console.log(`[SCRAPE-API] Fallback complete: ${processedCount} inserted, ${duplicateCount} duplicates skipped`);
-    } else {
-        processedCount = data?.length || 0;
-        duplicateCount = leadsToInsert.length - processedCount;
-        console.log(`[SCRAPE-API] ✓ Upsert complete: ${processedCount} inserted, ${duplicateCount} duplicates skipped`);
+        console.log(`[SCRAPE-API] Fallback complete: ${processedCount}/${leadsToInsert.length} inserted`);
+        return { processedCount, errors };
     }
-    
-    // Trigger async duplicate marking (doesn't block the response)
-    if (processedCount > 0) {
-        markDuplicatesAsync(scrapeId).catch(err => {
-            console.error(`[SCRAPE-API] Async duplicate marking failed:`, err);
-        });
-    }
+
+    const processedCount = data?.length || 0;
+    console.log(`[SCRAPE-API] ✓ Batch insert complete: ${processedCount} leads saved`);
 
     return { processedCount, errors };
-}
-
-/**
- * Mark duplicates asynchronously AFTER leads are saved
- */
-async function markDuplicatesAsync(scrapeId: string): Promise<void> {
-    console.log(`[SCRAPE-API] Starting async duplicate marking for scrape ${scrapeId}...`);
-    
-    try {
-        // Get all leads from this scrape
-        const { data: scrapeLeads, error: fetchError } = await supabase
-            .from('leads')
-            .select('id, first_name, last_name, company_name, created_at')
-            .eq('scrape_id', scrapeId);
-
-        if (fetchError || !scrapeLeads) {
-            console.error(`[SCRAPE-API] Failed to fetch leads for duplicate check:`, fetchError);
-            return;
-        }
-
-        let duplicateCount = 0;
-
-        // For each lead in this scrape, check if an older lead exists with same name/company
-        for (const lead of scrapeLeads) {
-            const { data: existingLead } = await supabase
-                .from('leads')
-                .select('id')
-                .ilike('first_name', lead.first_name || '')
-                .ilike('last_name', lead.last_name || '')
-                .ilike('company_name', lead.company_name || '')
-                .lt('created_at', lead.created_at)  // Only older leads
-                .neq('id', lead.id)  // Not itself
-                .limit(1)
-                .single();
-
-            if (existingLead) {
-                // Mark as duplicate
-                await supabase
-                    .from('leads')
-                    .update({ 
-                        is_duplicate: true, 
-                        original_lead_id: existingLead.id 
-                    })
-                    .eq('id', lead.id);
-                duplicateCount++;
-            }
-        }
-
-        console.log(`[SCRAPE-API] ✓ Async duplicate marking complete: ${duplicateCount} duplicates found`);
-    } catch (error) {
-        console.error(`[SCRAPE-API] Error in async duplicate marking:`, error);
-    }
 }
