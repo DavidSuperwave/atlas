@@ -84,6 +84,7 @@ export async function POST(request: Request) {
 
         // Update user profile with additional info
         // Note: The trigger should have already created the profile, but we'll update it
+        // Set is_approved = false - admin must approve before user can access
         const { error: profileError } = await supabase
             .from('user_profiles')
             .update({
@@ -93,6 +94,7 @@ export async function POST(request: Request) {
                 onboarding_completed: true,
                 onboarding_completed_at: new Date().toISOString(),
                 requested_credits_plan: creditsPlan || null,
+                is_approved: false, // Requires admin approval
             })
             .eq('id', authData.user.id);
 

@@ -301,9 +301,9 @@ function OnboardingContent() {
                         </svg>
                     </div>
                     
-                    <h1 className="text-3xl font-bold text-white mb-3">You're All Set!</h1>
+                    <h1 className="text-3xl font-bold text-white mb-3">Account Created!</h1>
                     <p className="text-zinc-400 text-lg mb-8">
-                        Watch this video first while we set up your workspace.
+                        Your account has been created. We&apos;re now setting up your workspace.
                     </p>
 
                     {/* Video placeholder */}
@@ -319,26 +319,44 @@ function OnboardingContent() {
                             </div>
                         </div>
                         <p className="text-zinc-500 text-sm">
-                            Learn how to use Atlas to find and verify leads.
+                            Watch this video to learn how to use Atlas while we set up your workspace.
                         </p>
+                    </div>
+
+                    {/* Next steps info */}
+                    <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-6 mb-6 text-left">
+                        <h3 className="text-blue-200 font-semibold mb-3 flex items-center gap-2">
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            What happens next?
+                        </h3>
+                        <ul className="text-blue-200/90 text-sm space-y-2">
+                            <li className="flex items-start gap-2">
+                                <span className="text-blue-400 mt-1">1.</span>
+                                <span>Our team will review and configure your workspace</span>
+                            </li>
+                            <li className="flex items-start gap-2">
+                                <span className="text-blue-400 mt-1">2.</span>
+                                <span>You&apos;ll receive an email when your workspace is ready</span>
+                            </li>
+                            <li className="flex items-start gap-2">
+                                <span className="text-blue-400 mt-1">3.</span>
+                                <span>Click the link in the email to log in and start using Atlas</span>
+                            </li>
+                        </ul>
                     </div>
 
                     <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-8">
                         <p className="text-amber-200 text-sm">
-                            <strong>Note:</strong> If your workspace isn't ready in 1 hour, reach out to us on{' '}
+                            <strong>Note:</strong> If you haven&apos;t heard from us within 24 hours, reach out on{' '}
                             <a href="#" className="underline hover:text-amber-100">Telegram</a>.
-                        </p>
-                        <p className="text-amber-200/80 text-xs mt-2">
-                            You will be notified when your workspace is ready.
                         </p>
                     </div>
 
-                    <Link
-                        href="/login"
-                        className="inline-block px-8 py-4 bg-white text-black font-semibold rounded-xl hover:bg-zinc-200 transition-colors"
-                    >
-                        Go to Login
-                    </Link>
+                    <p className="text-zinc-500 text-sm">
+                        You can close this page. We&apos;ll notify you when your workspace is ready.
+                    </p>
                 </div>
             </div>
         );

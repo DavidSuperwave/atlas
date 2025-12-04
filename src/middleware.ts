@@ -38,7 +38,7 @@ export async function middleware(request: NextRequest) {
 
     // Public routes that don't require authentication
     // Note: /signup removed - now invite-only system
-    const publicRoutes = ['/', '/login', '/invite', '/onboarding', '/auth/callback', '/account-disabled'];
+    const publicRoutes = ['/', '/login', '/invite', '/onboarding', '/auth/callback', '/account-disabled', '/pending-approval'];
     const isPublicRoute = publicRoutes.some(route => 
         pathname === route || pathname.startsWith(route + '/')
     );
@@ -69,19 +69,30 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(url);
     }
 
-    // Check if user account is disabled (for all protected routes)
+    // Check if user account is disabled or not approved (for all protected routes)
     if (user && !isPublicRoute && !isPublicApiRoute && !pathname.startsWith('/_next')) {
         const { data: profile } = await supabase
             .from('user_profiles')
-            .select('is_disabled')
+            .select('is_disabled, is_approved')
             .eq('id', user.id)
             .single();
 
+        // Check if account is disabled
         if (profile?.is_disabled) {
             // Redirect disabled users to account-disabled page
             if (pathname !== '/account-disabled') {
                 const url = request.nextUrl.clone();
                 url.pathname = '/account-disabled';
+                return NextResponse.redirect(url);
+            }
+        }
+        
+        // Check if account is not approved (pending approval)
+        if (profile && profile.is_approved === false) {
+            // Redirect unapproved users to pending-approval page
+            if (pathname !== '/pending-approval') {
+                const url = request.nextUrl.clone();
+                url.pathname = '/pending-approval';
                 return NextResponse.redirect(url);
             }
         }

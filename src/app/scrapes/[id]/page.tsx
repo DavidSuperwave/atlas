@@ -11,7 +11,7 @@ const POLLING_INTERVAL = 3000; // 3 seconds
 const POLLING_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 
 // Campaign platform types
-type CampaignPlatform = 'instantly' | 'smartlead' | 'plusvibe' | 'push';
+type CampaignPlatform = 'instantly' | 'smartlead' | 'plusvibe';
 
 interface CampaignAccount {
     id: string;
@@ -26,7 +26,6 @@ const PLATFORM_CONFIG: Record<CampaignPlatform, { name: string; color: string; r
     instantly: { name: 'Instantly', color: 'bg-blue-600 hover:bg-blue-700', requiresWorkspaceId: false },
     smartlead: { name: 'Smartlead', color: 'bg-green-600 hover:bg-green-700', requiresWorkspaceId: false },
     plusvibe: { name: 'PlusVibe', color: 'bg-violet-600 hover:bg-violet-700', requiresWorkspaceId: true },
-    push: { name: 'Push', color: 'bg-orange-600 hover:bg-orange-700', requiresWorkspaceId: false },
 };
 
 // Tag color palette for visual distinction

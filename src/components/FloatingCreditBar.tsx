@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation';
 import { useAuth } from './AuthProvider';
 
 // Routes where credit bar should be hidden
-const PUBLIC_ROUTES = ['/login', '/onboarding', '/invite', '/account-disabled'];
+const PUBLIC_ROUTES = ['/login', '/onboarding', '/invite', '/account-disabled', '/pending-approval'];
 
 export default function FloatingCreditBar() {
     const pathname = usePathname();

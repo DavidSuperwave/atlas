@@ -7,7 +7,7 @@ import { useAuth } from './AuthProvider';
 import { signOut, getUserProfile } from '@/lib/supabase-client';
 
 // Routes where sidebar should be hidden
-const PUBLIC_ROUTES = ['/login', '/onboarding', '/invite', '/account-disabled'];
+const PUBLIC_ROUTES = ['/login', '/onboarding', '/invite', '/account-disabled', '/pending-approval'];
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -185,12 +185,14 @@ export default function Sidebar() {
       )
     },
     {
-      name: 'Invites',
-      path: '/admin/invites',
+      name: 'Users',
+      path: '/admin/users',
       icon: (
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-          <rect width="20" height="16" x="2" y="4" rx="2" />
-          <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
         </svg>
       )
     },
