@@ -2,12 +2,22 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useAuth } from './AuthProvider';
 
+// Routes where credit bar should be hidden
+const PUBLIC_ROUTES = ['/login', '/onboarding', '/invite', '/account-disabled'];
+
 export default function FloatingCreditBar() {
+    const pathname = usePathname();
     const { user } = useAuth();
     const [balance, setBalance] = useState<number | null>(null);
     const [loading, setLoading] = useState(true);
+
+    // Hide on public routes
+    if (PUBLIC_ROUTES.some(route => pathname?.startsWith(route))) {
+        return null;
+    }
 
     useEffect(() => {
         if (user) {

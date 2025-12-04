@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Geist_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import Sidebar from "../components/Sidebar";
 import { AuthProvider } from "../components/AuthProvider";
 import FloatingCreditBar from "../components/FloatingCreditBar";
@@ -38,6 +39,7 @@ export default function RootLayout({
           </main>
           <FloatingCreditBar />
         </AuthProvider>
+        <Analytics />
       </body>
     </html>
   );

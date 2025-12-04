@@ -6,6 +6,9 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from './AuthProvider';
 import { signOut, getUserProfile } from '@/lib/supabase-client';
 
+// Routes where sidebar should be hidden
+const PUBLIC_ROUTES = ['/login', '/onboarding', '/invite', '/account-disabled'];
+
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
@@ -17,6 +20,11 @@ export default function Sidebar() {
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
   const [totalPurchased, setTotalPurchased] = useState<number | null>(null);
   const [creditsLoading, setCreditsLoading] = useState(true);
+
+  // Hide sidebar on public routes
+  if (PUBLIC_ROUTES.some(route => pathname?.startsWith(route))) {
+    return null;
+  }
 
   // Check if user is admin
   useEffect(() => {
