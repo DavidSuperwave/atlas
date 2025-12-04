@@ -749,18 +749,12 @@ class ScrapeQueue {
 export const scrapeQueue = new ScrapeQueue();
 
 // Auto-start processor when imported (for Railway)
-// Only auto-start if explicitly enabled via ENABLE_SCRAPE_QUEUE env var
-// This prevents startup issues on platforms with limited resources
-const shouldAutoStart = process.env.ENABLE_SCRAPE_QUEUE === 'true' && isGoLoginMode();
-
 console.log('[SCRAPE-QUEUE] Module loaded');
 console.log(`[SCRAPE-QUEUE] SCRAPER_MODE: ${process.env.SCRAPER_MODE || '(not set)'}`);
-console.log(`[SCRAPE-QUEUE] ENABLE_SCRAPE_QUEUE: ${process.env.ENABLE_SCRAPE_QUEUE || '(not set)'}`);
 console.log(`[SCRAPE-QUEUE] Is GoLogin mode: ${isGoLoginMode()}`);
-console.log(`[SCRAPE-QUEUE] Should auto-start: ${shouldAutoStart}`);
 
-if (typeof process !== 'undefined' && shouldAutoStart) {
-    console.log('[SCRAPE-QUEUE] Auto-start enabled, scheduling processor start...');
+if (typeof process !== 'undefined' && isGoLoginMode()) {
+    console.log('[SCRAPE-QUEUE] GoLogin mode detected, scheduling processor start...');
     // Delay start to allow Next.js to fully initialize
     setTimeout(() => {
         try {
@@ -772,7 +766,7 @@ if (typeof process !== 'undefined' && shouldAutoStart) {
                 console.error('[SCRAPE-QUEUE] Stack trace:', error.stack);
             }
         }
-    }, 10000); // Increased to 10s to give Next.js more time
+    }, 5000);
 } else {
-    console.log('[SCRAPE-QUEUE] Auto-start disabled or not in GoLogin mode');
+    console.log('[SCRAPE-QUEUE] Not in GoLogin mode, processor will not auto-start');
 }
