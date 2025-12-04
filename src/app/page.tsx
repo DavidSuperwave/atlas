@@ -3,9 +3,14 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 
+const REDACTED_WORDS = ['Redacted', 'Private', 'Secure', 'Exclusive'];
+
 export default function LandingPage() {
   const [showForm, setShowForm] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [redactedText, setRedactedText] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [wordIndex, setWordIndex] = useState(0);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -20,6 +25,34 @@ export default function LandingPage() {
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // Typing animation for "Redacted"
+  useEffect(() => {
+    const currentWord = REDACTED_WORDS[wordIndex];
+    
+    if (!isDeleting && redactedText === currentWord) {
+      // Finished typing, wait then start deleting
+      const timeout = setTimeout(() => setIsDeleting(true), 2000);
+      return () => clearTimeout(timeout);
+    }
+    
+    if (isDeleting && redactedText === '') {
+      // Finished deleting, move to next word
+      setIsDeleting(false);
+      setWordIndex((prev) => (prev + 1) % REDACTED_WORDS.length);
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      if (isDeleting) {
+        setRedactedText((prev) => prev.slice(0, -1));
+      } else {
+        setRedactedText((prev) => currentWord.slice(0, prev.length + 1));
+      }
+    }, isDeleting ? 50 : 100);
+
+    return () => clearTimeout(timeout);
+  }, [redactedText, isDeleting, wordIndex]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -56,65 +89,140 @@ export default function LandingPage() {
       </div>
 
       {/* Main content */}
-      <main className="relative z-10 flex flex-col items-center justify-center px-6 py-12 text-center max-w-4xl mx-auto">
-        {/* Animated Globe Icon */}
+      <main className="relative z-10 flex flex-col items-center justify-center px-6 py-12 text-center max-w-5xl mx-auto">
+        {/* Animated Globe Icon with Communication Lines */}
         <div className={`mb-12 transition-all duration-1000 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
-          <div className="relative w-24 h-24 mx-auto">
+          <div className="relative w-32 h-32 mx-auto">
             <svg
-              viewBox="0 0 100 100"
-              className="w-full h-full animate-globe-materialize"
+              viewBox="0 0 120 120"
+              className="w-full h-full"
               fill="none"
               stroke="currentColor"
               strokeWidth="1.5"
             >
-              {/* Main circle */}
-              <circle
-                cx="50"
-                cy="50"
-                r="45"
-                className="animate-draw-circle"
-                strokeDasharray="283"
-                strokeDashoffset="283"
-              />
-              {/* Horizontal line */}
-              <ellipse
-                cx="50"
-                cy="50"
-                rx="45"
-                ry="18"
-                className="animate-draw-ellipse-h"
-                strokeDasharray="200"
-                strokeDashoffset="200"
-              />
-              {/* Vertical meridian */}
-              <ellipse
-                cx="50"
-                cy="50"
-                rx="18"
-                ry="45"
-                className="animate-draw-ellipse-v"
-                strokeDasharray="200"
-                strokeDashoffset="200"
-              />
-              {/* Additional latitude lines */}
-              <ellipse
-                cx="50"
-                cy="32"
-                rx="38"
-                ry="10"
-                className="animate-draw-lat opacity-60"
-                strokeDasharray="150"
-                strokeDashoffset="150"
-              />
-              <ellipse
-                cx="50"
-                cy="68"
-                rx="38"
-                ry="10"
-                className="animate-draw-lat-2 opacity-60"
-                strokeDasharray="150"
-                strokeDashoffset="150"
-              />
+              {/* Globe base */}
+              <circle cx="60" cy="60" r="50" className="text-white opacity-20" />
+              
+              {/* Animated communication lines */}
+              <g className="text-blue-500">
+                {/* Line 1 */}
+                <line
+                  x1="20"
+                  y1="30"
+                  x2="100"
+                  y2="90"
+                  className="animate-pulse opacity-60"
+                  strokeDasharray="4 4"
+                >
+                  <animate
+                    attributeName="stroke-dashoffset"
+                    values="0;8"
+                    dur="2s"
+                    repeatCount="indefinite"
+                  />
+                </line>
+                
+                {/* Line 2 */}
+                <line
+                  x1="100"
+                  y1="30"
+                  x2="20"
+                  y2="90"
+                  className="animate-pulse opacity-60"
+                  strokeDasharray="4 4"
+                >
+                  <animate
+                    attributeName="stroke-dashoffset"
+                    values="0;8"
+                    dur="2.5s"
+                    repeatCount="indefinite"
+                  />
+                </line>
+                
+                {/* Line 3 */}
+                <line
+                  x1="60"
+                  y1="10"
+                  x2="60"
+                  y2="110"
+                  className="animate-pulse opacity-40"
+                  strokeDasharray="3 3"
+                >
+                  <animate
+                    attributeName="stroke-dashoffset"
+                    values="0;6"
+                    dur="1.8s"
+                    repeatCount="indefinite"
+                  />
+                </line>
+                
+                {/* Line 4 */}
+                <line
+                  x1="10"
+                  y1="60"
+                  x2="110"
+                  y2="60"
+                  className="animate-pulse opacity-40"
+                  strokeDasharray="3 3"
+                >
+                  <animate
+                    attributeName="stroke-dashoffset"
+                    values="0;6"
+                    dur="2.2s"
+                    repeatCount="indefinite"
+                  />
+                </line>
+                
+                {/* Diagonal lines */}
+                <line
+                  x1="30"
+                  y1="15"
+                  x2="90"
+                  y2="105"
+                  className="animate-pulse opacity-30"
+                  strokeDasharray="2 2"
+                >
+                  <animate
+                    attributeName="stroke-dashoffset"
+                    values="0;4"
+                    dur="2.8s"
+                    repeatCount="indefinite"
+                  />
+                </line>
+                
+                <line
+                  x1="90"
+                  y1="15"
+                  x2="30"
+                  y2="105"
+                  className="animate-pulse opacity-30"
+                  strokeDasharray="2 2"
+                >
+                  <animate
+                    attributeName="stroke-dashoffset"
+                    values="0;4"
+                    dur="3s"
+                    repeatCount="indefinite"
+                  />
+                </line>
+              </g>
+              
+              {/* Globe structure */}
+              <circle cx="60" cy="60" r="50" className="text-white opacity-30" />
+              <ellipse cx="60" cy="60" rx="50" ry="20" className="text-white opacity-20" />
+              <ellipse cx="60" cy="60" rx="20" ry="50" className="text-white opacity-20" />
+              <ellipse cx="60" cy="45" rx="42" ry="12" className="text-white opacity-15" />
+              <ellipse cx="60" cy="75" rx="42" ry="12" className="text-white opacity-15" />
+              
+              {/* Connection points */}
+              <circle cx="20" cy="30" r="2" className="text-blue-400 animate-pulse" />
+              <circle cx="100" cy="30" r="2" className="text-blue-400 animate-pulse" />
+              <circle cx="100" cy="90" r="2" className="text-blue-400 animate-pulse" />
+              <circle cx="20" cy="90" r="2" className="text-blue-400 animate-pulse" />
+              <circle cx="60" cy="10" r="2" className="text-blue-400 animate-pulse" />
+              <circle cx="60" cy="110" r="2" className="text-blue-400 animate-pulse" />
+              <circle cx="10" cy="60" r="2" className="text-blue-400 animate-pulse" />
+              <circle cx="110" cy="60" r="2" className="text-blue-400 animate-pulse" />
             </svg>
           </div>
         </div>
@@ -129,19 +237,56 @@ export default function LandingPage() {
           PRIVATE MARKET INTELLIGENCE
         </h1>
 
-        {/* Subheading */}
+        {/* Subheading with typing animation */}
         <p
-          className={`text-lg md:text-xl text-zinc-400 max-w-3xl mb-12 leading-relaxed transition-all duration-1000 delay-500 ${
+          className={`text-lg md:text-xl text-zinc-400 max-w-4xl mb-8 leading-relaxed transition-all duration-1000 delay-500 ${
             mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
           }`}
           style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
         >
           PROPRIETARY DATA INTERWOVEN WITH ARTIFICIAL INTELLIGENCE TO UNCOVER ALPHA AND OPPORTUNITIES IN PRIVATE MARKETS.
         </p>
+        
+        <p
+          className={`text-lg md:text-xl text-zinc-300 mb-12 transition-all duration-1000 delay-600 ${
+            mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
+          }`}
+          style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
+        >
+          Private Scraper for{' '}
+          <span className="text-blue-400 font-semibold inline-block min-w-[120px]">
+            {redactedText}
+            <span className="animate-pulse">|</span>
+          </span>
+        </p>
+
+        {/* Features Section */}
+        <div
+          className={`grid grid-cols-1 md:grid-cols-3 gap-6 mb-12 w-full max-w-4xl transition-all duration-1000 delay-700 ${
+            mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
+          }`}
+        >
+          <div className="bg-zinc-900/40 backdrop-blur-sm border border-zinc-800/50 rounded-xl p-6">
+            <div className="text-3xl font-bold text-white mb-2">248M</div>
+            <div className="text-sm text-zinc-400">Unlimited Leads/Scrapes</div>
+            <div className="text-xs text-zinc-500 mt-1">Contacts</div>
+          </div>
+          
+          <div className="bg-zinc-900/40 backdrop-blur-sm border border-zinc-800/50 rounded-xl p-6">
+            <div className="text-xl font-semibold text-white mb-2">Unpatchable</div>
+            <div className="text-sm text-zinc-400">Method</div>
+          </div>
+          
+          <div className="bg-zinc-900/40 backdrop-blur-sm border border-zinc-800/50 rounded-xl p-6">
+            <div className="text-xl font-semibold text-white mb-2">Email Verifier</div>
+            <div className="text-sm text-zinc-400">Only pay for enrichment</div>
+            <div className="text-xs text-zinc-500 mt-1">if lead is valid</div>
+          </div>
+        </div>
 
         {/* Request Access Button */}
         <div
-          className={`transition-all duration-1000 delay-700 ${
+          className={`transition-all duration-1000 delay-800 ${
             mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
           }`}
         >
@@ -187,11 +332,11 @@ export default function LandingPage() {
               <p className="text-zinc-400">
                 Thank you for your interest. We&apos;ll review your request and get back to you shortly.
               </p>
-              {formData.wantsImmediateStart && (
+              {formData.wantsImmediateStart && process.env.NEXT_PUBLIC_TELEGRAM_LINK && (
                 <p className="text-zinc-400 mt-4">
                   Want to chat now? Join our{' '}
                   <a
-                    href="https://t.me/yourgroup"
+                    href={process.env.NEXT_PUBLIC_TELEGRAM_LINK}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-blue-400 hover:text-blue-300 underline"
@@ -330,16 +475,6 @@ export default function LandingPage() {
 
       {/* CSS Animations */}
       <style jsx>{`
-        @keyframes draw-circle {
-          to {
-            stroke-dashoffset: 0;
-          }
-        }
-        @keyframes draw-ellipse {
-          to {
-            stroke-dashoffset: 0;
-          }
-        }
         @keyframes arrow-bounce {
           0%, 100% {
             transform: translateX(0);
@@ -348,41 +483,8 @@ export default function LandingPage() {
             transform: translateX(4px);
           }
         }
-        .animate-draw-circle {
-          animation: draw-circle 1.5s ease-out forwards;
-          animation-delay: 0.2s;
-        }
-        .animate-draw-ellipse-h {
-          animation: draw-ellipse 1.2s ease-out forwards;
-          animation-delay: 0.5s;
-        }
-        .animate-draw-ellipse-v {
-          animation: draw-ellipse 1.2s ease-out forwards;
-          animation-delay: 0.7s;
-        }
-        .animate-draw-lat {
-          animation: draw-ellipse 1s ease-out forwards;
-          animation-delay: 0.9s;
-        }
-        .animate-draw-lat-2 {
-          animation: draw-ellipse 1s ease-out forwards;
-          animation-delay: 1.1s;
-        }
         .animate-arrow-bounce {
           animation: arrow-bounce 1.5s ease-in-out infinite;
-        }
-        .animate-globe-materialize {
-          animation: globe-materialize 0.8s ease-out forwards;
-        }
-        @keyframes globe-materialize {
-          0% {
-            opacity: 0;
-            transform: scale(0.8);
-          }
-          100% {
-            opacity: 1;
-            transform: scale(1);
-          }
         }
       `}</style>
     </div>
