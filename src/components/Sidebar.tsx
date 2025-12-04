@@ -7,7 +7,7 @@ import { useAuth } from './AuthProvider';
 import { signOut, getUserProfile } from '@/lib/supabase-client';
 
 // Routes where sidebar should be hidden
-const PUBLIC_ROUTES = ['/login', '/onboarding', '/invite', '/account-disabled', '/pending-approval'];
+const PUBLIC_ROUTES = ['/', '/login', '/onboarding', '/invite', '/account-disabled', '/pending-approval'];
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -408,13 +408,13 @@ export default function Sidebar() {
         )}
       </nav>
 
-      {/* Tutorial Video Section */}
-      {!isCollapsed && (
+      {/* Tutorial Video Section - only show if NEXT_PUBLIC_TUTORIAL_VIDEO_ID is set */}
+      {!isCollapsed && process.env.NEXT_PUBLIC_TUTORIAL_VIDEO_ID && (
         <div className="px-3 py-3 border-t border-zinc-800/50">
           <p className="text-[10px] font-medium text-zinc-500 mb-2">Watch this video to learn how to use it</p>
           <div className="relative aspect-video rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800/50">
             <iframe 
-              src="https://fast.wistia.net/embed/iframe/YOUR_VIDEO_ID?seo=true&videoFoam=false"
+              src={`https://fast.wistia.net/embed/iframe/${process.env.NEXT_PUBLIC_TUTORIAL_VIDEO_ID}?seo=true&videoFoam=false`}
               title="Tutorial Video"
               allow="autoplay; fullscreen"
               frameBorder="0"

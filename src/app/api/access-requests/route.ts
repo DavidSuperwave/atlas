@@ -89,6 +89,29 @@ export async function POST(request: Request) {
 export async function GET(request: Request) {
     try {
         const supabase = createServiceClient();
+        
+        // Auth check - only admins can list access requests
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+            return NextResponse.json(
+                { error: 'Unauthorized' },
+                { status: 401 }
+            );
+        }
+        
+        // Check if user is admin
+        const { data: profile } = await supabase
+            .from('user_profiles')
+            .select('is_admin')
+            .eq('id', user.id)
+            .single();
+            
+        if (!profile?.is_admin) {
+            return NextResponse.json(
+                { error: 'Forbidden - Admin access required' },
+                { status: 403 }
+            );
+        }
 
         // Get status filter from query params
         const { searchParams } = new URL(request.url);

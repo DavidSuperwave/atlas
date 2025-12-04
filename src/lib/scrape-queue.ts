@@ -167,11 +167,15 @@ class ScrapeQueue {
             return { state: 'available' };
         }
 
-        // Check if session is stale (no heartbeat in 30 minutes)
-        const lastHeartbeat = new Date(activeSession.last_heartbeat).getTime();
+        // Check if session is stale (no heartbeat in 30 minutes, or started > 30 min ago)
+        const lastHeartbeat = activeSession.last_heartbeat 
+            ? new Date(activeSession.last_heartbeat).getTime() 
+            : new Date(activeSession.started_at).getTime();
         const now = Date.now();
+        
+        // If no activity for 30 minutes OR session started more than 30 minutes ago, mark as stale
         if (now - lastHeartbeat > 30 * 60 * 1000) {
-            // Mark as completed and return available
+            console.log(`[SCRAPE-QUEUE] Clearing stale browser session: ${activeSession.id}`);
             await supabase
                 .from('browser_sessions')
                 .update({ status: 'completed', ended_at: new Date().toISOString() })
