@@ -13,11 +13,11 @@ export default function FloatingCreditBar() {
     const { user } = useAuth();
     const [balance, setBalance] = useState<number | null>(null);
     const [loading, setLoading] = useState(true);
+    const [mounted, setMounted] = useState(false);
 
-    // Hide on public routes
-    if (PUBLIC_ROUTES.some(route => pathname?.startsWith(route))) {
-        return null;
-    }
+    useEffect(() => {
+        setMounted(true);
+    }, []);
 
     useEffect(() => {
         if (user) {
@@ -43,6 +43,14 @@ export default function FloatingCreditBar() {
         } finally {
             setLoading(false);
         }
+    }
+
+    // Don't render until mounted (prevents hydration mismatch)
+    if (!mounted) return null;
+
+    // Hide on public routes
+    if (PUBLIC_ROUTES.some(route => pathname?.startsWith(route))) {
+        return null;
     }
 
     // Don't render if not logged in

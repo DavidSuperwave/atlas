@@ -73,7 +73,7 @@ export async function middleware(request: NextRequest) {
     if (user && !isPublicRoute && !isPublicApiRoute && !pathname.startsWith('/_next')) {
         const { data: profile } = await supabase
             .from('user_profiles')
-            .select('is_disabled, is_approved')
+            .select('is_disabled, is_approved, is_admin')
             .eq('id', user.id)
             .single();
 
@@ -88,7 +88,8 @@ export async function middleware(request: NextRequest) {
         }
         
         // Check if account is not approved (pending approval)
-        if (profile && profile.is_approved === false) {
+        // BUT: Allow admins to bypass this check
+        if (profile && profile.is_approved === false && !profile.is_admin) {
             // Redirect unapproved users to pending-approval page
             if (pathname !== '/pending-approval') {
                 const url = request.nextUrl.clone();

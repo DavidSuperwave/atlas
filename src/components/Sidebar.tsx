@@ -20,9 +20,14 @@ export default function Sidebar() {
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
   const [totalPurchased, setTotalPurchased] = useState<number | null>(null);
   const [creditsLoading, setCreditsLoading] = useState(true);
+  const [mounted, setMounted] = useState(false);
 
-  // Hide sidebar on public routes
-  if (PUBLIC_ROUTES.some(route => pathname?.startsWith(route))) {
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Hide sidebar on public routes (but only after mount to prevent hydration mismatch)
+  if (mounted && PUBLIC_ROUTES.some(route => pathname?.startsWith(route))) {
     return null;
   }
 
