@@ -274,6 +274,17 @@ chmod +x /opt/dolphin-anty/dolphin-anty
 # or whatever the executable is named
 ```
 
+### Email Service (Resend) Configuration
+
+Set these environment variables for the invite email system:
+
+```bash
+RESEND_API_KEY=re_xxxxxxxxxxxx
+RESEND_FROM_EMAIL=noreply@atlasv2.com
+```
+
+**Important:** The domain in `RESEND_FROM_EMAIL` (e.g., `atlasv2.com`) must be verified in your [Resend dashboard](https://resend.com/domains). Add the required DNS records and wait for verification before sending emails.
+
 ### Step 4.5: Launch Dolphin Anty
 
 Via noVNC desktop:

@@ -53,6 +53,12 @@ MAILTESTER_API_KEY_3=your-third-key
 
 # Or as JSON array:
 # MAILTESTER_API_KEYS='["key1","key2","key3"]'
+
+# =============================================================================
+# REQUIRED - Email Service (Resend) - For Invite Emails
+# =============================================================================
+RESEND_API_KEY=re_xxxxxxxxxxxx
+RESEND_FROM_EMAIL=noreply@atlasv2.com
 ```
 
 ---
@@ -346,5 +352,24 @@ Ensure at least one of these is set:
 2. Verify file is named correctly (`.env.local` or `.env.production`)
 3. Check for syntax errors in the file
 4. For Vercel/Railway, redeploy after updating environment variables
+
+### "The domain is not verified" (Resend)
+
+This error occurs when `RESEND_FROM_EMAIL` uses a domain that isn't verified in Resend:
+
+1. Go to [Resend Domains](https://resend.com/domains)
+2. Add your domain if not already added
+3. Add the required DNS records (MX, TXT, DKIM) to your domain
+4. Wait for verification (usually 5-10 minutes)
+5. Ensure `RESEND_FROM_EMAIL` uses an email address with your verified domain
+   - Example: `noreply@atlasv2.com` (not `noreply@example.com`)
+
+### "RESEND_FROM_EMAIL environment variable is required"
+
+1. Add `RESEND_FROM_EMAIL` to your environment variables
+2. Use your verified domain: `RESEND_FROM_EMAIL=noreply@yourdomain.com`
+3. For Vercel: Add it in Project Settings → Environment Variables
+4. For local dev: Add to `.env.local`
+5. Redeploy after adding the variable
 
 
