@@ -1,8 +1,9 @@
 /**
  * GoLogin API Client
  * 
- * This module provides a TypeScript client for interacting with the GoLogin
- * cloud API. GoLogin is a cloud-based anti-detect browser service.
+ * This module provides a TypeScript client for interacting with GoLogin.
+ * It uses the official 'gologin' npm package for browser automation (Puppeteer support)
+ * and keeps cloud API methods for status checks and profile management.
  * 
  * PREREQUISITES:
  * 1. GoLogin account with API access
@@ -12,14 +13,33 @@
  * ENVIRONMENT VARIABLES:
  * - GOLOGIN_API_TOKEN: API token from GoLogin dashboard
  * - GOLOGIN_PROFILE_ID: Profile ID to use for scraping
+ * - GOLOGIN_DEBUG: Set to 'true' for verbose logging
  * 
- * API DOCUMENTATION:
- * @see https://docs.gologin.com/
+ * @see https://github.com/gologinapp/gologin
  * @see docs/GOLOGIN_SETUP.md for setup instructions
  */
 
-/** GoLogin API base URL */
+// @ts-ignore - gologin package doesn't have TypeScript definitions
+import { GoLogin } from 'gologin';
+
+/** GoLogin API base URL for status/management calls */
 const GOLOGIN_API_URL = 'https://api.gologin.com';
+
+/** Debug mode flag */
+const DEBUG = process.env.GOLOGIN_DEBUG === 'true';
+
+/**
+ * Debug log helper - only logs when GOLOGIN_DEBUG=true
+ */
+function debugLog(message: string, data?: unknown): void {
+    if (DEBUG) {
+        if (data) {
+            console.log(`[GOLOGIN-DEBUG] ${message}`, data);
+        } else {
+            console.log(`[GOLOGIN-DEBUG] ${message}`);
+        }
+    }
+}
 
 /**
  * GoLogin profile information
@@ -74,22 +94,26 @@ export interface GoLoginProfileListResponse {
 }
 
 /**
+ * GoLogin SDK instance type
+ */
+interface GoLoginSDKInstance {
+    start: () => Promise<{ status: string; wsUrl: string }>;
+    stop: () => Promise<void>;
+}
+
+/**
  * GoLogin API Client
  * 
- * Provides methods to interact with GoLogin's cloud API for
- * managing browser profiles and obtaining WebSocket endpoints for
- * Puppeteer automation.
+ * Uses the official 'gologin' npm package for browser automation.
+ * The SDK downloads and runs a local Orbita browser with the profile's
+ * anti-detect fingerprint, providing a WebSocket endpoint for Puppeteer.
  * 
- * ADVANTAGES OVER DOLPHIN ANTY:
- * - Cloud-based: No local installation needed
- * - Web dashboard: Easy team access for manual browser operations
- * - API-first: Designed for automation
- * - Simpler setup: Just API token, no VNC required
+ * Cloud API methods are kept for profile management and status checks.
  */
 export class GoLoginClient {
     private apiToken: string;
     private profileId: string | null;
-    private runningProfiles: Map<string, { wsEndpoint: string; pid?: number }> = new Map();
+    private runningProfiles: Map<string, { wsEndpoint: string; glInstance: GoLoginSDKInstance }> = new Map();
 
     /**
      * Create a new GoLogin client
@@ -202,10 +226,15 @@ export class GoLoginClient {
         }
 
         try {
-            const response = await fetch(`${GOLOGIN_API_URL}/browser/v2/${id}`, {
+            const url = `${GOLOGIN_API_URL}/browser/${id}`;
+            debugLog(`GET ${url}`);
+            
+            const response = await fetch(url, {
                 method: 'GET',
                 headers: this.getHeaders()
             });
+
+            debugLog(`Response status: ${response.status}`);
 
             if (!response.ok) {
                 if (response.status === 404) {
@@ -215,6 +244,8 @@ export class GoLoginClient {
             }
 
             const data = await response.json();
+            debugLog('Profile data:', data);
+            
             return {
                 id: data.id,
                 name: data.name,
@@ -232,10 +263,10 @@ export class GoLoginClient {
     }
 
     /**
-     * Start a browser profile
+     * Start a browser profile using the official GoLogin SDK
      * 
-     * This launches the browser profile via GoLogin cloud and returns
-     * the WebSocket endpoint for Puppeteer connection.
+     * This launches a local Orbita browser with the profile's anti-detect
+     * fingerprint and returns a WebSocket endpoint for Puppeteer connection.
      * 
      * @param profileId - Profile ID to start (uses default if not provided)
      * @returns Start response with WebSocket endpoint
@@ -261,60 +292,41 @@ export class GoLoginClient {
         }
 
         try {
-            console.log(`[GOLOGIN-CLIENT] Starting profile: ${id}`);
+            console.log(`[GOLOGIN-CLIENT] Starting profile: ${id} using GoLogin SDK`);
             
-            // Start the profile via GoLogin API
-            const response = await fetch(`${GOLOGIN_API_URL}/browser/${id}/start`, {
-                method: 'POST',
-                headers: this.getHeaders(),
-                body: JSON.stringify({
-                    // Request remote browser (cloud-based)
-                    isRemote: true,
-                    // Sync settings
-                    sync: true
-                })
+            // Create GoLogin SDK instance
+            const GL = new GoLogin({
+                token: this.apiToken,
+                profile_id: id,
+                // Upload cookies to server after stopping (preserves session)
+                uploadCookiesToServer: true,
+                // Import cookies from server on start
+                writeCookesFromServer: true,
             });
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`HTTP error ${response.status}: ${errorText}`);
+            debugLog('GoLogin SDK instance created');
+
+            // Start the browser profile
+            const { status, wsUrl } = await GL.start();
+            
+            debugLog(`Start result - status: ${status}, wsUrl: ${wsUrl}`);
+
+            if (status !== 'success' || !wsUrl) {
+                throw new Error(`Failed to start profile: status=${status}`);
             }
 
-            const data = await response.json();
-            
-            // GoLogin returns wsEndpoint directly for remote browsers
-            const wsEndpoint = data.wsEndpoint || data.ws || '';
-            
-            if (!wsEndpoint) {
-                // Try alternative: Get remote debugging URL
-                const statusResponse = await fetch(`${GOLOGIN_API_URL}/browser/${id}/status`, {
-                    method: 'GET',
-                    headers: this.getHeaders()
-                });
-                
-                if (statusResponse.ok) {
-                    const statusData = await statusResponse.json();
-                    if (statusData.wsEndpoint) {
-                        this.runningProfiles.set(id, { wsEndpoint: statusData.wsEndpoint });
-                        console.log(`[GOLOGIN-CLIENT] Profile started successfully`);
-                        console.log(`[GOLOGIN-CLIENT] WebSocket endpoint: ${statusData.wsEndpoint}`);
-                        return {
-                            success: true,
-                            wsEndpoint: statusData.wsEndpoint
-                        };
-                    }
-                }
-                
-                throw new Error('Failed to get WebSocket endpoint from GoLogin');
-            }
+            // Store the running instance
+            this.runningProfiles.set(id, { 
+                wsEndpoint: wsUrl, 
+                glInstance: GL 
+            });
 
-            this.runningProfiles.set(id, { wsEndpoint });
             console.log(`[GOLOGIN-CLIENT] Profile started successfully`);
-            console.log(`[GOLOGIN-CLIENT] WebSocket endpoint: ${wsEndpoint}`);
+            console.log(`[GOLOGIN-CLIENT] WebSocket endpoint: ${wsUrl}`);
 
             return {
                 success: true,
-                wsEndpoint
+                wsEndpoint: wsUrl
             };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -342,20 +354,20 @@ export class GoLoginClient {
             };
         }
 
+        const running = this.runningProfiles.get(id);
+        if (!running) {
+            console.log(`[GOLOGIN-CLIENT] Profile ${id} is not running (no cached instance)`);
+            return { success: true };
+        }
+
         try {
             console.log(`[GOLOGIN-CLIENT] Stopping profile: ${id}`);
             
-            const response = await fetch(`${GOLOGIN_API_URL}/browser/${id}/stop`, {
-                method: 'POST',
-                headers: this.getHeaders()
-            });
-
+            // Stop using the SDK instance
+            await running.glInstance.stop();
+            
             // Remove from running profiles cache
             this.runningProfiles.delete(id);
-
-            if (!response.ok && response.status !== 404) {
-                throw new Error(`HTTP error: ${response.status}`);
-            }
 
             console.log(`[GOLOGIN-CLIENT] Profile stopped successfully`);
             
@@ -401,7 +413,7 @@ export class GoLoginClient {
                 };
             }
 
-            // Check running status
+            // Check running status from cache
             const cached = this.runningProfiles.get(id);
             if (cached) {
                 return {
@@ -410,32 +422,6 @@ export class GoLoginClient {
                     isRunning: true,
                     wsEndpoint: cached.wsEndpoint
                 };
-            }
-
-            // Check via API
-            try {
-                const statusResponse = await fetch(`${GOLOGIN_API_URL}/browser/${id}/status`, {
-                    method: 'GET',
-                    headers: this.getHeaders()
-                });
-
-                if (statusResponse.ok) {
-                    const statusData = await statusResponse.json();
-                    const isRunning = statusData.status === 'running' || !!statusData.wsEndpoint;
-                    
-                    if (isRunning && statusData.wsEndpoint) {
-                        this.runningProfiles.set(id, { wsEndpoint: statusData.wsEndpoint });
-                    }
-
-                    return {
-                        success: true,
-                        profile,
-                        isRunning,
-                        wsEndpoint: statusData.wsEndpoint
-                    };
-                }
-            } catch {
-                // Status endpoint might not exist or profile not running
             }
 
             return {
@@ -464,14 +450,13 @@ export class GoLoginClient {
     async getRunningProfileEndpoint(profileId?: string): Promise<string | null> {
         const id = profileId || this.profileId || undefined;
         
-        // Check cache first
+        // Check cache
         const cached = this.runningProfiles.get(id || '');
         if (cached) {
             return cached.wsEndpoint;
         }
 
-        const status = await this.getProfileStatus(id);
-        return status.isRunning ? (status.wsEndpoint || null) : null;
+        return null;
     }
 
     /**
@@ -623,6 +608,7 @@ export class GoLoginClient {
             `API Valid: ${v.apiTokenValid ? 'Yes' : 'No'}`,
             `Profile ID: ${this.profileId || 'NOT SET'}`,
             `Profile Exists: ${v.profileExists ? 'Yes' : 'No'}`,
+            `SDK: Using official gologin npm package`,
         ];
         if (v.profileInfo) {
             lines.push(`Profile Name: ${v.profileInfo.name}`);
@@ -639,6 +625,44 @@ export class GoLoginClient {
         }
         lines.push('=================================');
         return lines.join('\n');
+    }
+
+    /**
+     * Start cloud browser (for manual/visual access)
+     * This uses the cloud API endpoint, not the SDK
+     * 
+     * @param profileId - Profile ID to start
+     * @returns Cloud browser URL
+     */
+    async startCloudBrowser(profileId?: string): Promise<{ success: boolean; url?: string; error?: string }> {
+        const id = profileId || this.profileId;
+        if (!id) {
+            return { success: false, error: 'Profile ID is required' };
+        }
+
+        try {
+            const response = await fetch(`${GOLOGIN_API_URL}/browser/${id}/web`, {
+                method: 'POST',
+                headers: this.getHeaders(),
+                body: JSON.stringify({})
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`HTTP error ${response.status}: ${errorText}`);
+            }
+
+            const data = await response.json();
+            
+            if (data.remoteOrbitaUrl) {
+                return { success: true, url: data.remoteOrbitaUrl };
+            }
+
+            return { success: false, error: 'No cloud browser URL in response' };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            return { success: false, error: errorMessage };
+        }
     }
 }
 

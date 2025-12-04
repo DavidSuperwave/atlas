@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
-import { scrapeApollo, ScrapedLead, getScraperMode } from '@/lib/scraper';
+import { getScraperMode } from '@/lib/scraper';
 import { getCurrentUser, createServiceClient } from '@/lib/supabase-server';
 import { handleCors, corsJsonResponse } from '@/lib/cors';
 import { getUserProfileDbId } from '@/lib/gologin-profile-manager';
+import { scrapeQueue } from '@/lib/scrape-queue';
 
 const supabase = createServiceClient();
 
@@ -16,11 +17,19 @@ export async function OPTIONS(request: Request) {
     return new NextResponse(null, { status: 204 });
 }
 
+/**
+ * POST /api/scrape
+ * 
+ * Creates a scrape request and adds it to the queue.
+ * Returns immediately with queue status (202 Accepted).
+ * 
+ * For GoLogin mode: Uses queue system for sequential processing
+ * For other modes: Falls back to synchronous processing (legacy)
+ */
 export async function POST(request: Request) {
     // Handle CORS for cross-origin requests
     const corsResponse = handleCors(request);
     if (corsResponse) return corsResponse;
-    let scrapeId: string | null = null;
     
     // Get current scraper mode for logging and tracking
     const scraperMode = getScraperMode();
@@ -45,18 +54,20 @@ export async function POST(request: Request) {
             gologinProfileDbId = await getUserProfileDbId(user.id);
         }
 
-        // Create scrape record with user_id, name, tags, scraper_mode, and gologin_profile_id
+        // Create scrape record with status 'queued' for gologin mode, 'running' for others
+        const initialStatus = scraperMode === 'gologin' ? 'queued' : 'running';
+        
         const { data: scrape, error: scrapeError } = await supabase
             .from('scrapes')
             .insert({ 
                 url, 
-                filters, 
-                status: 'running',
+                filters: { ...filters, pages }, // Store pages in filters
+                status: initialStatus,
                 user_id: user.id,
                 name: name?.trim() || null,
                 tags: Array.isArray(tags) ? tags : [],
-                scraper_mode: scraperMode, // Track which scraper was used
-                gologin_profile_id: gologinProfileDbId // Track which profile was used
+                scraper_mode: scraperMode,
+                gologin_profile_id: gologinProfileDbId
             })
             .select()
             .single();
@@ -66,14 +77,48 @@ export async function POST(request: Request) {
             return corsJsonResponse({ error: scrapeError.message }, request, { status: 500 });
         }
 
-        scrapeId = scrape.id;
+        // For GoLogin mode: Add to queue and return immediately
+        if (scraperMode === 'gologin') {
+            console.log(`[SCRAPE-API] Adding scrape to queue: ${scrape.id}`);
+            
+            const queueResult = await scrapeQueue.addToQueue(scrape.id, user.id);
+            
+            if (!queueResult.success) {
+                // Update scrape status to failed
+                await supabase.from('scrapes').update({ 
+                    status: 'failed',
+                    error_details: { message: queueResult.error }
+                }).eq('id', scrape.id);
+                
+                return corsJsonResponse({ 
+                    error: queueResult.error || 'Failed to add to queue' 
+                }, request, { status: 500 });
+            }
 
-        // Start scraping process - pass user.id for GoLogin profile lookup
+            // Return 202 Accepted with queue info
+            return corsJsonResponse({ 
+                success: true, 
+                scrapeId: scrape.id,
+                queueId: queueResult.queueId,
+                status: 'queued',
+                position: queueResult.position,
+                browserState: queueResult.browserState,
+                message: queueResult.browserState === 'manual_use' 
+                    ? 'Browser is in use. Scrape will start when browser is available.'
+                    : queueResult.position && queueResult.position > 1
+                    ? `Scrape queued. Position: ${queueResult.position}`
+                    : 'Scrape queued and will start shortly.',
+                scraperMode
+            }, request, { status: 202 });
+        }
+
+        // For other modes: Run synchronously (legacy behavior)
+        // This maintains backward compatibility with local/dolphin modes
+        const { scrapeApollo } = await import('@/lib/scraper');
         const leads = await scrapeApollo(url, pages, user.id);
         
         // Validate and filter leads before saving
         const validLeads = leads.filter(lead => {
-            // Must have first and last name
             if (!lead.first_name?.trim() || !lead.last_name?.trim()) {
                 console.log(`Skipping lead without valid name: ${lead.first_name} ${lead.last_name}`);
                 return false;
@@ -81,14 +126,14 @@ export async function POST(request: Request) {
             return true;
         });
 
-        // Batch insert leads for better performance with user_id
+        // Batch insert leads
         const { processedCount, errors } = await batchSaveLeads(scrape.id, user.id, validLeads);
 
         // Update scrape status with results
         await supabase.from('scrapes').update({ 
             status: 'completed', 
             total_leads: processedCount,
-            error_details: errors.length > 0 ? { errors: errors.slice(0, 10) } : null // Store first 10 errors
+            error_details: errors.length > 0 ? { errors: errors.slice(0, 10) } : null
         }).eq('id', scrape.id);
 
         return corsJsonResponse({ 
@@ -97,36 +142,37 @@ export async function POST(request: Request) {
             scrapeId: scrape.id,
             skipped: leads.length - validLeads.length,
             errors: errors.length,
-            scraperMode // Include scraper mode in response for debugging
+            scraperMode
         }, request);
 
     } catch (error) {
         console.error('Scrape process failed:', error);
-        
-        // Update scrape status to failed if we have a scrape ID
-        if (scrapeId) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            await supabase.from('scrapes').update({ 
-                status: 'failed',
-                error_details: { 
-                    message: errorMessage,
-                    timestamp: new Date().toISOString()
-                }
-            }).eq('id', scrapeId);
-        }
-        
-        return corsJsonResponse({ error: error instanceof Error ? error.message : 'Unknown error' }, request, { status: 500 });
+        return corsJsonResponse({ 
+            error: error instanceof Error ? error.message : 'Unknown error' 
+        }, request, { status: 500 });
     }
 }
 
 /**
- * Batch save leads for better performance
+ * Batch save leads for better performance (legacy for non-queue modes)
  */
-async function batchSaveLeads(scrapeId: string, userId: string, leads: ScrapedLead[]): Promise<{ processedCount: number; errors: string[] }> {
+async function batchSaveLeads(scrapeId: string, userId: string, leads: { 
+    first_name?: string; 
+    last_name?: string; 
+    title?: string;
+    company_name?: string;
+    company_linkedin?: string;
+    location?: string;
+    company_size?: string;
+    industry?: string;
+    website?: string;
+    keywords?: string[];
+    phone_numbers?: string[];
+    linkedin_url?: string;
+}[]): Promise<{ processedCount: number; errors: string[] }> {
     const errors: string[] = [];
     let processedCount = 0;
     
-    // Process in batches of 50 to avoid hitting Supabase limits
     const BATCH_SIZE = 50;
     
     for (let i = 0; i < leads.length; i += BATCH_SIZE) {
@@ -157,10 +203,8 @@ async function batchSaveLeads(scrapeId: string, userId: string, leads: ScrapedLe
             .select();
 
         if (error) {
-            // Handle batch errors - try individual inserts as fallback
             console.error(`Batch insert error: ${error.message}`);
             
-            // Fall back to individual inserts for this batch
             for (const leadData of leadsToInsert) {
                 const { data: singleData, error: singleError } = await supabase
                     .from('leads')
@@ -170,7 +214,6 @@ async function batchSaveLeads(scrapeId: string, userId: string, leads: ScrapedLe
 
                 if (singleError) {
                     if (singleError.code === '23505') {
-                        // Duplicate - not an error, just skip
                         console.log(`Duplicate lead skipped: ${leadData.first_name} ${leadData.last_name}`);
                     } else {
                         errors.push(`Failed to save ${leadData.first_name} ${leadData.last_name}: ${singleError.message}`);

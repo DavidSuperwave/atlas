@@ -36,6 +36,7 @@ const RAILWAY_APIS = [
     '/api/scrape/gologin-status',
     '/api/scrape/dolphin-status',
     '/api/verify-emails',
+    '/api/browser', // Browser access/status/close endpoints
 ];
 
 /**
