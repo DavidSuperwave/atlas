@@ -28,8 +28,8 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${inter.variable} ${geistMono.variable} antialiased flex min-h-screen bg-gray-50`}
-        style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
+        className={`${inter.variable} ${geistMono.variable} antialiased flex min-h-screen bg-zinc-50`}
+        style={{ fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}
       >
         <AuthProvider>
           <Sidebar />

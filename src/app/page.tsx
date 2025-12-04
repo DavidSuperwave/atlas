@@ -104,7 +104,7 @@ export default function LandingPage() {
               <circle cx="60" cy="60" r="50" className="text-white opacity-20" />
               
               {/* Animated communication lines */}
-              <g className="text-blue-500">
+              <g className="text-zinc-400">
                 {/* Line 1 */}
                 <line
                   x1="20"
@@ -215,14 +215,14 @@ export default function LandingPage() {
               <ellipse cx="60" cy="75" rx="42" ry="12" className="text-white opacity-15" />
               
               {/* Connection points */}
-              <circle cx="20" cy="30" r="2" className="text-blue-400 animate-pulse" />
-              <circle cx="100" cy="30" r="2" className="text-blue-400 animate-pulse" />
-              <circle cx="100" cy="90" r="2" className="text-blue-400 animate-pulse" />
-              <circle cx="20" cy="90" r="2" className="text-blue-400 animate-pulse" />
-              <circle cx="60" cy="10" r="2" className="text-blue-400 animate-pulse" />
-              <circle cx="60" cy="110" r="2" className="text-blue-400 animate-pulse" />
-              <circle cx="10" cy="60" r="2" className="text-blue-400 animate-pulse" />
-              <circle cx="110" cy="60" r="2" className="text-blue-400 animate-pulse" />
+              <circle cx="20" cy="30" r="2" className="text-zinc-400 animate-pulse" fill="currentColor" />
+              <circle cx="100" cy="30" r="2" className="text-zinc-400 animate-pulse" fill="currentColor" />
+              <circle cx="100" cy="90" r="2" className="text-zinc-400 animate-pulse" fill="currentColor" />
+              <circle cx="20" cy="90" r="2" className="text-zinc-400 animate-pulse" fill="currentColor" />
+              <circle cx="60" cy="10" r="2" className="text-zinc-400 animate-pulse" fill="currentColor" />
+              <circle cx="60" cy="110" r="2" className="text-zinc-400 animate-pulse" fill="currentColor" />
+              <circle cx="10" cy="60" r="2" className="text-zinc-400 animate-pulse" fill="currentColor" />
+              <circle cx="110" cy="60" r="2" className="text-zinc-400 animate-pulse" fill="currentColor" />
             </svg>
           </div>
         </div>
@@ -254,7 +254,7 @@ export default function LandingPage() {
           style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
         >
           Private Scraper for{' '}
-          <span className="text-blue-400 font-semibold inline-block min-w-[120px]">
+          <span className="text-white font-semibold inline-block min-w-[120px]">
             {redactedText}
             <span className="animate-pulse">|</span>
           </span>
@@ -339,7 +339,7 @@ export default function LandingPage() {
                     href={process.env.NEXT_PUBLIC_TELEGRAM_LINK}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-blue-400 hover:text-blue-300 underline"
+                    className="text-white hover:text-zinc-300 underline"
                   >
                     Telegram group
                   </a>

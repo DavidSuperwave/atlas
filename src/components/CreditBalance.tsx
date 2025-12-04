@@ -33,8 +33,8 @@ export default function CreditBalance({ compact = false }: CreditBalanceProps) {
 
     if (loading) {
         return (
-            <div className={`${compact ? 'px-3 py-2' : 'p-4'} animate-pulse`}>
-                <div className="h-4 bg-slate-700 rounded w-20"></div>
+            <div className={`${compact ? 'px-2.5 py-1.5' : 'p-4'} animate-pulse`}>
+                <div className="h-4 bg-zinc-800 rounded w-16"></div>
             </div>
         );
     }
@@ -50,24 +50,24 @@ export default function CreditBalance({ compact = false }: CreditBalanceProps) {
         return (
             <Link 
                 href="/credits"
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600/80 hover:bg-blue-500/80 transition-colors"
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/50 transition-colors"
             >
-                <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <span className="text-sm font-medium text-white">{balance.toLocaleString()}</span>
+                <span className="text-xs font-medium text-zinc-200">{balance.toLocaleString()}</span>
             </Link>
         );
     }
 
     return (
-        <div className="bg-gradient-to-br from-slate-800/80 to-slate-900/80 rounded-xl border border-slate-700/50 p-6">
+        <div className="bg-zinc-900/80 rounded-xl border border-zinc-800/50 p-6">
             <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-white">Credit Balance</h3>
+                <h3 className="text-base font-semibold text-zinc-100">Credit Balance</h3>
                 {isAdmin && (
                     <Link 
                         href="/admin/credits"
-                        className="text-xs px-2 py-1 bg-amber-500/20 text-amber-400 rounded-full"
+                        className="text-[10px] px-2 py-1 bg-amber-500/10 text-amber-400 rounded font-medium"
                     >
                         Admin
                     </Link>
@@ -76,29 +76,29 @@ export default function CreditBalance({ compact = false }: CreditBalanceProps) {
             
             <div className="space-y-4">
                 <div>
-                    <div className="text-4xl font-bold text-white mb-1">
+                    <div className="text-3xl font-bold text-white mb-1">
                         {balance.toLocaleString()}
                     </div>
-                    <div className="text-sm text-slate-400">
+                    <div className="text-sm text-zinc-500">
                         credits available
                     </div>
                 </div>
 
-                <div className="pt-4 border-t border-slate-700/50">
+                <div className="pt-4 border-t border-zinc-800/50">
                     <div className="flex justify-between text-sm">
-                        <span className="text-slate-400">Value</span>
+                        <span className="text-zinc-500">Value</span>
                         <span className="text-emerald-400 font-medium">${dollarValue.toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between text-sm mt-1">
-                        <span className="text-slate-400">Rate</span>
-                        <span className="text-slate-300">$1 per 1,000</span>
+                        <span className="text-zinc-500">Rate</span>
+                        <span className="text-zinc-300">$1 per 1,000</span>
                     </div>
                 </div>
 
                 <div className="pt-4">
                     <Link
                         href="/credits"
-                        className="block w-full text-center py-2 px-4 bg-slate-700/50 hover:bg-slate-600/50 text-white rounded-lg transition-colors text-sm"
+                        className="block w-full text-center py-2 px-4 bg-zinc-800/50 hover:bg-zinc-800 text-zinc-200 rounded-lg transition-colors text-sm font-medium border border-zinc-700/50"
                     >
                         View History
                     </Link>
@@ -107,4 +107,3 @@ export default function CreditBalance({ compact = false }: CreditBalanceProps) {
         </div>
     );
 }
-

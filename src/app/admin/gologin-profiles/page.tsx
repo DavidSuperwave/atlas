@@ -19,6 +19,14 @@ interface GoLoginProfile {
     }[];
 }
 
+interface AvailableProfile {
+    id: string;
+    name: string;
+    browserType?: string;
+    os?: string;
+    alreadyAdded: boolean;
+}
+
 interface User {
     id: string;
     email: string;
@@ -27,12 +35,16 @@ interface User {
 export default function GoLoginProfilesPage() {
     const { user, loading: authLoading } = useAuth();
     const [profiles, setProfiles] = useState<GoLoginProfile[]>([]);
+    const [availableProfiles, setAvailableProfiles] = useState<AvailableProfile[]>([]);
     const [users, setUsers] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadingAvailable, setLoadingAvailable] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [availableError, setAvailableError] = useState<string | null>(null);
 
     // Form states
     const [showAddForm, setShowAddForm] = useState(false);
+    const [selectedAvailableProfile, setSelectedAvailableProfile] = useState<string>('');
     const [newProfile, setNewProfile] = useState({ profile_id: '', name: '', description: '' });
     const [editingProfile, setEditingProfile] = useState<GoLoginProfile | null>(null);
     const [submitting, setSubmitting] = useState(false);
@@ -71,6 +83,49 @@ export default function GoLoginProfilesPage() {
         }
     }
 
+    async function fetchAvailableProfiles() {
+        setLoadingAvailable(true);
+        setAvailableError(null);
+        try {
+            const res = await fetch('/api/admin/gologin-profiles/available');
+            const data = await res.json();
+            
+            if (!res.ok) {
+                setAvailableError(data.error || 'Failed to fetch GoLogin profiles');
+                setAvailableProfiles([]);
+                return;
+            }
+
+            setAvailableProfiles(data.profiles || []);
+        } catch (err) {
+            setAvailableError('Failed to connect to GoLogin API');
+            console.error(err);
+        } finally {
+            setLoadingAvailable(false);
+        }
+    }
+
+    function handleShowAddForm() {
+        setShowAddForm(true);
+        setSelectedAvailableProfile('');
+        setNewProfile({ profile_id: '', name: '', description: '' });
+        fetchAvailableProfiles();
+    }
+
+    function handleSelectAvailableProfile(profileId: string) {
+        setSelectedAvailableProfile(profileId);
+        const profile = availableProfiles.find(p => p.id === profileId);
+        if (profile) {
+            setNewProfile({
+                profile_id: profile.id,
+                name: profile.name,
+                description: `Browser: ${profile.browserType || 'Unknown'}, OS: ${profile.os || 'Unknown'}`
+            });
+        } else {
+            setNewProfile({ profile_id: '', name: '', description: '' });
+        }
+    }
+
     async function handleAddProfile(e: React.FormEvent) {
         e.preventDefault();
         if (!newProfile.profile_id || !newProfile.name) return;
@@ -86,6 +141,7 @@ export default function GoLoginProfilesPage() {
             const data = await res.json();
             if (res.ok) {
                 setNewProfile({ profile_id: '', name: '', description: '' });
+                setSelectedAvailableProfile('');
                 setShowAddForm(false);
                 fetchData();
             } else {
@@ -209,8 +265,8 @@ export default function GoLoginProfilesPage() {
     }
 
     function getUserEmail(userId: string): string {
-        const user = users.find(u => u.id === userId);
-        return user?.email || userId.slice(0, 8) + '...';
+        const foundUser = users.find(u => u.id === userId);
+        return foundUser?.email || userId.slice(0, 8) + '...';
     }
 
     if (authLoading || loading) {
@@ -234,6 +290,8 @@ export default function GoLoginProfilesPage() {
         );
     }
 
+    const notAddedProfiles = availableProfiles.filter(p => !p.alreadyAdded);
+
     return (
         <div className="p-8 max-w-6xl mx-auto">
             <div className="flex items-center justify-between mb-6">
@@ -247,17 +305,61 @@ export default function GoLoginProfilesPage() {
                     </p>
                 </div>
                 <button
-                    onClick={() => setShowAddForm(true)}
+                    onClick={handleShowAddForm}
                     className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
                 >
                     + Add Profile
                 </button>
             </div>
 
-            {/* Add Profile Form */}
+            {/* Add Profile Form - Now with dropdown! */}
             {showAddForm && (
                 <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
-                    <h2 className="font-semibold mb-4">Add New Profile</h2>
+                    <h2 className="font-semibold mb-4">Add GoLogin Profile</h2>
+                    
+                    {/* Fetch from GoLogin Section */}
+                    <div className="mb-6 p-4 bg-blue-50 rounded-lg">
+                        <h3 className="font-medium text-blue-900 mb-2">Select from your GoLogin account</h3>
+                        
+                        {loadingAvailable ? (
+                            <div className="text-blue-700 text-sm">Loading profiles from GoLogin...</div>
+                        ) : availableError ? (
+                            <div className="text-red-600 text-sm">
+                                {availableError}
+                                <button 
+                                    onClick={fetchAvailableProfiles}
+                                    className="ml-2 text-blue-600 hover:underline"
+                                >
+                                    Retry
+                                </button>
+                            </div>
+                        ) : notAddedProfiles.length === 0 ? (
+                            <div className="text-gray-600 text-sm">
+                                {availableProfiles.length === 0 
+                                    ? 'No profiles found in your GoLogin account'
+                                    : 'All available profiles have already been added'}
+                            </div>
+                        ) : (
+                            <div className="space-y-2">
+                                <select
+                                    value={selectedAvailableProfile}
+                                    onChange={(e) => handleSelectAvailableProfile(e.target.value)}
+                                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                >
+                                    <option value="">Select a profile from GoLogin...</option>
+                                    {notAddedProfiles.map((p) => (
+                                        <option key={p.id} value={p.id}>
+                                            {p.name} ({p.browserType || 'Unknown browser'})
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="text-xs text-blue-700">
+                                    Found {availableProfiles.length} profile(s) in GoLogin, {notAddedProfiles.length} not yet added
+                                </p>
+                            </div>
+                        )}
+                    </div>
+
                     <form onSubmit={handleAddProfile} className="space-y-4">
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -267,13 +369,11 @@ export default function GoLoginProfilesPage() {
                                 type="text"
                                 value={newProfile.profile_id}
                                 onChange={(e) => setNewProfile({ ...newProfile, profile_id: e.target.value })}
-                                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                placeholder="e.g., abc123-def456-..."
+                                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-50"
+                                placeholder="Select from dropdown above or enter manually"
                                 required
+                                readOnly={!!selectedAvailableProfile}
                             />
-                            <p className="text-xs text-gray-500 mt-1">
-                                Find this in your GoLogin dashboard URL when viewing the profile
-                            </p>
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -303,7 +403,7 @@ export default function GoLoginProfilesPage() {
                         <div className="flex gap-2">
                             <button
                                 type="submit"
-                                disabled={submitting}
+                                disabled={submitting || !newProfile.profile_id}
                                 className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50"
                             >
                                 {submitting ? 'Adding...' : 'Add Profile'}
@@ -313,6 +413,7 @@ export default function GoLoginProfilesPage() {
                                 onClick={() => {
                                     setShowAddForm(false);
                                     setNewProfile({ profile_id: '', name: '', description: '' });
+                                    setSelectedAvailableProfile('');
                                 }}
                                 className="px-4 py-2 border rounded-lg hover:bg-gray-50"
                             >
@@ -401,7 +502,7 @@ export default function GoLoginProfilesPage() {
                 <div className="bg-white rounded-lg shadow-sm border p-8 text-center">
                     <p className="text-gray-500">No GoLogin profiles configured yet.</p>
                     <button
-                        onClick={() => setShowAddForm(true)}
+                        onClick={handleShowAddForm}
                         className="text-blue-600 hover:underline mt-2"
                     >
                         Add your first profile
@@ -537,13 +638,12 @@ export default function GoLoginProfilesPage() {
             <div className="mt-8 bg-blue-50 border border-blue-100 rounded-lg p-4">
                 <h3 className="font-medium text-blue-900 mb-2">How it works</h3>
                 <ul className="text-sm text-blue-800 space-y-1">
-                    <li>• Each GoLogin profile should have Apollo logged in and a proxy configured</li>
+                    <li>• Click "Add Profile" to see available profiles from your GoLogin account</li>
+                    <li>• Select a profile from the dropdown - ID and name are auto-filled</li>
                     <li>• Assign profiles to users - each user gets one profile for their scrapes</li>
-                    <li>• Users without an assignment will use the default profile from env vars</li>
-                    <li>• Deactivating a profile will cause assigned users to fall back to the default</li>
+                    <li>• Make sure the profile is running in GoLogin Cloud before scraping</li>
                 </ul>
             </div>
         </div>
     );
 }
-
