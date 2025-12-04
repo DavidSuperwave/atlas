@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        const { token, name, password, hasApolloAccount, apiKeys, creditsPlan } = body;
+        const { token, name, password, hasApolloAccount, campaignPlatform, campaignApiKey, campaignWorkspaceId, campaignId, creditsPlan } = body;
 
         if (!token) {
             return NextResponse.json({ error: 'Token is required' }, { status: 400 });
@@ -87,6 +87,7 @@ export async function POST(request: Request) {
         const { error: profileError } = await supabase
             .from('user_profiles')
             .update({
+                name: name.trim(),
                 has_apollo_account: hasApolloAccount,
                 credits_balance: 1000, // Give 1000 free credits
                 onboarding_completed: true,
@@ -127,11 +128,13 @@ export async function POST(request: Request) {
             // Don't fail - the account was created successfully
         }
 
-        // Store API keys if provided (for future use)
-        if (apiKeys?.apolloApiKey) {
-            // TODO: Implement API key storage when feature is ready
-            console.log('API keys provided but storage not yet implemented');
-        }
+        // Return campaign account data if provided (will be saved to localStorage client-side)
+        const campaignAccountData = campaignPlatform && campaignApiKey && campaignId ? {
+            platform: campaignPlatform,
+            apiKey: campaignApiKey,
+            workspaceId: campaignWorkspaceId || undefined,
+            campaignId: campaignId,
+        } : null;
 
         // Log the credit plan request if provided
         if (creditsPlan) {
@@ -153,6 +156,7 @@ export async function POST(request: Request) {
                 id: authData.user.id,
                 email: authData.user.email,
             },
+            campaignAccount: campaignAccountData,
         });
     } catch (error) {
         console.error('Error completing onboarding:', error);

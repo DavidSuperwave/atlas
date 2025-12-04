@@ -50,7 +50,7 @@ A
 <table border="0" cellpadding="0" cellspacing="0" width="100%">
 <tr>
 <td align="center" style="padding-bottom: 16px; color: #ffffff; font-size: 28px; font-weight: bold; line-height: 1.2;">
-You're Invited
+You've been accepted to Atlas!
 </td>
 </tr>
 </table>
@@ -59,7 +59,7 @@ You're Invited
 <table border="0" cellpadding="0" cellspacing="0" width="100%">
 <tr>
 <td align="center" style="padding-bottom: 32px; color: #888888; font-size: 16px; line-height: 24px;">
-You've been invited to join Atlas, our private market intelligence platform. Click the button below to complete your onboarding and set up your account.
+You've been accepted to join Atlas. Please complete the onboarding so we can setup your workspace.
 </td>
 </tr>
 </table>

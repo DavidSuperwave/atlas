@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
 type OnboardingStep = 1 | 2 | 3 | 'completing' | 'complete';
+type CampaignPlatform = 'instantly' | 'plusvibe' | 'smartlead' | null;
 
 interface FormData {
     name: string;
@@ -12,9 +13,10 @@ interface FormData {
     password: string;
     confirmPassword: string;
     hasApolloAccount: boolean | null;
-    apiKeys: {
-        apolloApiKey: string;
-    };
+    campaignPlatform: CampaignPlatform;
+    campaignApiKey: string;
+    campaignWorkspaceId: string;
+    campaignId: string;
     creditsPlan: string | null;
 }
 
@@ -35,11 +37,14 @@ function OnboardingContent() {
         password: '',
         confirmPassword: '',
         hasApolloAccount: null,
-        apiKeys: {
-            apolloApiKey: '',
-        },
+        campaignPlatform: null,
+        campaignApiKey: '',
+        campaignWorkspaceId: '',
+        campaignId: '',
         creditsPlan: null,
     });
+    
+    const [stepTransition, setStepTransition] = useState(false);
 
     useEffect(() => {
         if (token) {
@@ -108,7 +113,10 @@ function OnboardingContent() {
                     name: formData.name,
                     password: formData.password,
                     hasApolloAccount: formData.hasApolloAccount,
-                    apiKeys: formData.apiKeys,
+                    campaignPlatform: formData.campaignPlatform,
+                    campaignApiKey: formData.campaignApiKey,
+                    campaignWorkspaceId: formData.campaignWorkspaceId,
+                    campaignId: formData.campaignId,
                     creditsPlan: formData.creditsPlan,
                 }),
             });
@@ -119,6 +127,28 @@ function OnboardingContent() {
                 setError(data.error || 'Failed to complete onboarding');
                 setCurrentStep(1);
                 return;
+            }
+
+            // Save campaign account to localStorage if provided
+            if (data.campaignAccount && formData.campaignPlatform && formData.campaignApiKey && formData.campaignId) {
+                try {
+                    const existingAccounts = localStorage.getItem('campaign_accounts');
+                    const accounts = existingAccounts ? JSON.parse(existingAccounts) : [];
+                    
+                    // Create new account entry
+                    const newAccount = {
+                        id: `onboarding-${Date.now()}`,
+                        name: `${formData.campaignPlatform.charAt(0).toUpperCase() + formData.campaignPlatform.slice(1)} Account`,
+                        apiKey: formData.campaignApiKey,
+                        workspaceId: formData.campaignWorkspaceId || undefined,
+                        platform: formData.campaignPlatform,
+                    };
+                    
+                    accounts.push(newAccount);
+                    localStorage.setItem('campaign_accounts', JSON.stringify(accounts));
+                } catch (err) {
+                    console.error('Failed to save campaign account:', err);
+                }
             }
 
             // Show completion animation for 3 seconds then show final screen
@@ -155,17 +185,30 @@ function OnboardingContent() {
                 setError('Please select your Apollo account status');
                 return;
             }
-            setCurrentStep(2);
+            // Fade out animation
+            setStepTransition(true);
+            setTimeout(() => {
+                setCurrentStep(2);
+                setStepTransition(false);
+            }, 200);
         } else if (currentStep === 2) {
-            setCurrentStep(3);
+            setStepTransition(true);
+            setTimeout(() => {
+                setCurrentStep(3);
+                setStepTransition(false);
+            }, 200);
         } else if (currentStep === 3) {
             handleComplete();
         }
     }
 
     function handleBack() {
-        if (currentStep === 2) setCurrentStep(1);
-        if (currentStep === 3) setCurrentStep(2);
+        setStepTransition(true);
+        setTimeout(() => {
+            if (currentStep === 2) setCurrentStep(1);
+            if (currentStep === 3) setCurrentStep(2);
+            setStepTransition(false);
+        }, 200);
     }
 
     function handleSkip() {
@@ -221,11 +264,17 @@ function OnboardingContent() {
                         <div className="absolute inset-0 flex items-center justify-center">
                             <div className="w-24 h-24 rounded-full border-2 border-white/20 animate-ping" style={{ animationDuration: '1.5s', animationDelay: '0.5s' }} />
                         </div>
-                        <div className="relative w-20 h-20 mx-auto bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center">
-                            <svg className="w-10 h-10 text-white" viewBox="0 0 100 100" fill="none" stroke="currentColor" strokeWidth="3">
-                                <circle cx="50" cy="50" r="40" />
-                                <ellipse cx="50" cy="50" rx="40" ry="16" />
-                                <ellipse cx="50" cy="50" rx="16" ry="40" />
+                        <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
+                            <svg
+                                viewBox="0 0 100 100"
+                                className="w-20 h-20 text-white"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                            >
+                                <circle cx="50" cy="50" r="45" />
+                                <ellipse cx="50" cy="50" rx="45" ry="18" />
+                                <ellipse cx="50" cy="50" rx="18" ry="45" />
                             </svg>
                         </div>
                     </div>
@@ -331,7 +380,7 @@ function OnboardingContent() {
                 </div>
 
                 {/* Step Content */}
-                <div className="bg-zinc-900/60 backdrop-blur-xl rounded-2xl border border-zinc-800/50 p-8">
+                <div className={`bg-zinc-900/60 backdrop-blur-xl rounded-2xl border border-zinc-800/50 p-8 transition-opacity duration-200 ${stepTransition ? 'opacity-0' : 'opacity-100'}`}>
                     {error && (
                         <div className="mb-6 p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm">
                             {error}
@@ -477,20 +526,80 @@ function OnboardingContent() {
                                 <p className="text-zinc-400 text-sm">Preset API keys to upload leads to your account</p>
                             </div>
 
-                            <div className="bg-zinc-800/40 border border-zinc-700/50 rounded-xl p-6 text-center">
-                                <div className="w-16 h-16 mx-auto mb-4 bg-zinc-700/50 rounded-xl flex items-center justify-center">
-                                    <svg className="w-8 h-8 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                                    </svg>
-                                </div>
-                                <h3 className="text-lg font-semibold text-white mb-2">Coming Soon</h3>
-                                <p className="text-zinc-400 text-sm mb-4">
-                                    Configure your workspace to push leads to your campaigns directly from the dashboard.
-                                </p>
-                                <p className="text-zinc-500 text-xs">
-                                    This feature is currently in development.
-                                </p>
+                            {/* Platform Selection */}
+                            <div>
+                                <label className="block text-sm font-medium text-zinc-400 mb-2">
+                                    Select Platform
+                                </label>
+                                <select
+                                    value={formData.campaignPlatform || ''}
+                                    onChange={(e) => {
+                                        const platform = e.target.value as CampaignPlatform;
+                                        setFormData({
+                                            ...formData,
+                                            campaignPlatform: platform || null,
+                                            campaignApiKey: '',
+                                            campaignWorkspaceId: '',
+                                            campaignId: '',
+                                        });
+                                    }}
+                                    className="w-full px-4 py-3 bg-zinc-800/60 border border-zinc-700/50 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-transparent transition-all"
+                                >
+                                    <option value="">Select a platform...</option>
+                                    <option value="instantly">Instantly</option>
+                                    <option value="plusvibe">PlusVibe</option>
+                                    <option value="smartlead">Smartlead</option>
+                                </select>
                             </div>
+
+                            {/* Conditional Fields Based on Platform */}
+                            {formData.campaignPlatform && (
+                                <div className="space-y-4 animate-fadeIn">
+                                    {/* API Key - Required for all */}
+                                    <div>
+                                        <label className="block text-sm font-medium text-zinc-400 mb-2">
+                                            API Key <span className="text-red-400">*</span>
+                                        </label>
+                                        <input
+                                            type="password"
+                                            value={formData.campaignApiKey}
+                                            onChange={(e) => setFormData({ ...formData, campaignApiKey: e.target.value })}
+                                            placeholder={`Enter your ${formData.campaignPlatform.charAt(0).toUpperCase() + formData.campaignPlatform.slice(1)} API key`}
+                                            className="w-full px-4 py-3 bg-zinc-800/60 border border-zinc-700/50 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-transparent transition-all"
+                                        />
+                                    </div>
+
+                                    {/* Workspace ID - Required for PlusVibe only */}
+                                    {formData.campaignPlatform === 'plusvibe' && (
+                                        <div>
+                                            <label className="block text-sm font-medium text-zinc-400 mb-2">
+                                                Workspace ID <span className="text-red-400">*</span>
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={formData.campaignWorkspaceId}
+                                                onChange={(e) => setFormData({ ...formData, campaignWorkspaceId: e.target.value })}
+                                                placeholder="Enter your PlusVibe workspace ID"
+                                                className="w-full px-4 py-3 bg-zinc-800/60 border border-zinc-700/50 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-transparent transition-all"
+                                            />
+                                        </div>
+                                    )}
+
+                                    {/* Campaign ID - Required for all */}
+                                    <div>
+                                        <label className="block text-sm font-medium text-zinc-400 mb-2">
+                                            Campaign ID <span className="text-red-400">*</span>
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={formData.campaignId}
+                                            onChange={(e) => setFormData({ ...formData, campaignId: e.target.value })}
+                                            placeholder={`Enter your ${formData.campaignPlatform.charAt(0).toUpperCase() + formData.campaignPlatform.slice(1)} campaign ID`}
+                                            className="w-full px-4 py-3 bg-zinc-800/60 border border-zinc-700/50 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-transparent transition-all"
+                                        />
+                                    </div>
+                                </div>
+                            )}
 
                             <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
                                 <p className="text-blue-200 text-sm">
@@ -504,14 +613,14 @@ function OnboardingContent() {
                     {currentStep === 3 && (
                         <div className="space-y-6">
                             <div className="text-center mb-6">
-                                <h2 className="text-2xl font-bold text-white mb-2">Get Started with Credits</h2>
-                                <p className="text-zinc-400 text-sm">You are given 1000 free credits to start</p>
+                                <h2 className="text-2xl font-bold text-white mb-2">Get Enrichment</h2>
+                                <p className="text-zinc-400 text-sm">You are given 1000 free enrichment credits with your account</p>
                             </div>
 
                             {/* Free Credits Banner */}
                             <div className="bg-gradient-to-r from-emerald-500/20 to-green-500/20 border border-emerald-500/40 rounded-xl p-6 text-center">
                                 <div className="text-4xl font-bold text-emerald-400 mb-2">1,000</div>
-                                <div className="text-emerald-200 font-medium">Free Credits</div>
+                                <div className="text-emerald-200 font-medium">Free Enrichment Credits</div>
                                 <p className="text-emerald-100/70 text-sm mt-2">
                                     You only pay if your enrichment is valid
                                 </p>
@@ -547,7 +656,7 @@ function OnboardingContent() {
 
                             <div className="bg-zinc-800/40 border border-zinc-700/50 rounded-xl p-4">
                                 <p className="text-zinc-400 text-sm">
-                                    <strong className="text-zinc-300">Note:</strong> Pricing details coming soon. Your plan selection will be saved as a request.
+                                    <strong className="text-zinc-300">Note:</strong> Credits are only used up if you get are able to verify a lead.
                                 </p>
                             </div>
                         </div>
