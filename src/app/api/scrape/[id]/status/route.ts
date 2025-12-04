@@ -74,7 +74,8 @@ export async function GET(
         switch (scrape.status) {
             case 'queued':
                 if (queueStatus.position && queueStatus.position > 1) {
-                    message = `Queued. Position: ${queueStatus.position}`;
+                    const waitTime = queueStatus.timeEstimateFormatted || '';
+                    message = `Queue position: #${queueStatus.position}${waitTime ? ` (${waitTime} wait)` : ''}`;
                 } else if (browserState.state === 'manual_use') {
                     message = 'Waiting for browser to become available';
                 } else {
@@ -82,7 +83,11 @@ export async function GET(
                 }
                 break;
             case 'running':
-                message = 'Scraping in progress...';
+                if (queueStatus.timeEstimateFormatted) {
+                    message = `Scraping... ${queueStatus.timeEstimateFormatted} remaining`;
+                } else {
+                    message = 'Scraping in progress...';
+                }
                 break;
             case 'completed':
                 message = `Completed. Found ${leadCount || 0} leads.`;
@@ -107,7 +112,11 @@ export async function GET(
             errorDetails: scrape.error_details,
             createdAt: scrape.created_at,
             startedAt: queueStatus.startedAt,
-            completedAt: queueStatus.completedAt
+            completedAt: queueStatus.completedAt,
+            // Time estimates
+            estimatedTimeRemaining: queueStatus.estimatedTimeRemaining,
+            estimatedCompletionTime: queueStatus.estimatedCompletionTime,
+            timeEstimateFormatted: queueStatus.timeEstimateFormatted
         }, request);
 
     } catch (error) {

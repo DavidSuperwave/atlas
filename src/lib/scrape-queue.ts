@@ -31,6 +31,48 @@ const POLL_INTERVAL = 3000; // 3 seconds
 /** Maximum time a scrape can run before being considered stuck */
 const MAX_SCRAPE_DURATION = 15 * 60 * 1000; // 15 minutes
 
+/** Time estimation constants (in seconds) */
+const TIME_ESTIMATES = {
+    /** Browser startup and initialization */
+    BROWSER_STARTUP: 10,
+    /** Time to load each Apollo page */
+    PAGE_LOAD: 8,
+    /** Time to extract data from each page (~25 leads) */
+    DATA_EXTRACTION: 15,
+    /** Human-like delays per page to avoid detection */
+    HUMAN_DELAYS: 12,
+    /** Database operations per page */
+    DATABASE_OPS: 5,
+    /** Buffer for network variability */
+    BUFFER: 10,
+};
+
+/** Calculate estimated time for a scrape in seconds */
+function estimateScrapeTime(pages: number = 1): { minSeconds: number; maxSeconds: number; avgSeconds: number } {
+    const perPage = TIME_ESTIMATES.PAGE_LOAD + TIME_ESTIMATES.DATA_EXTRACTION + TIME_ESTIMATES.HUMAN_DELAYS + TIME_ESTIMATES.DATABASE_OPS;
+    const base = TIME_ESTIMATES.BROWSER_STARTUP;
+    
+    const minSeconds = base + (perPage * pages);
+    const maxSeconds = minSeconds + TIME_ESTIMATES.BUFFER + (pages * 10); // Extra buffer per page
+    const avgSeconds = Math.round((minSeconds + maxSeconds) / 2);
+    
+    return { minSeconds, maxSeconds, avgSeconds };
+}
+
+/** Format seconds into human-readable string */
+function formatTimeEstimate(seconds: number): string {
+    if (seconds < 60) {
+        return `~${seconds}s`;
+    } else if (seconds < 3600) {
+        const mins = Math.round(seconds / 60);
+        return `~${mins} min${mins > 1 ? 's' : ''}`;
+    } else {
+        const hours = Math.floor(seconds / 3600);
+        const mins = Math.round((seconds % 3600) / 60);
+        return `~${hours}h ${mins}m`;
+    }
+}
+
 /** Interface for queue items */
 interface ScrapeQueueItem {
     id: string;
@@ -340,29 +382,12 @@ class ScrapeQueue {
     }
 
     /**
-     * Check if a lead already exists in the database (duplicate detection)
-     * Returns the original lead ID if found, null otherwise
-     */
-    async findExistingLead(firstName: string, lastName: string, companyName: string | null): Promise<string | null> {
-        const { data } = await supabase
-            .from('leads')
-            .select('id')
-            .ilike('first_name', firstName.trim())
-            .ilike('last_name', lastName.trim())
-            .ilike('company_name', companyName?.trim() || '')
-            .limit(1)
-            .single();
-
-        return data?.id || null;
-    }
-
-    /**
-     * Save leads to database (batch insert) with duplicate tracking
+     * Save leads to database using FAST batch insert
+     * Duplicates are marked asynchronously AFTER insert to avoid blocking
      */
     async saveLeads(scrapeId: string, userId: string, leads: ScrapedLead[]): Promise<{ processedCount: number; duplicateCount: number; errors: string[] }> {
         const errors: string[] = [];
         let processedCount = 0;
-        let duplicateCount = 0;
 
         // Filter out invalid leads
         const validLeads = leads.filter(lead => {
@@ -372,58 +397,106 @@ class ScrapeQueue {
             return true;
         });
 
-        // Process leads individually to check for duplicates
-        for (const lead of validLeads) {
-            const firstName = lead.first_name?.trim() || '';
-            const lastName = lead.last_name?.trim() || '';
-            const companyName = lead.company_name?.trim() || null;
-
-            // Check for existing lead (duplicate detection)
-            const originalLeadId = await this.findExistingLead(firstName, lastName, companyName);
-            const isDuplicate = originalLeadId !== null;
-
-            if (isDuplicate) {
-                duplicateCount++;
-                console.log(`[SCRAPE-QUEUE] Duplicate detected: ${firstName} ${lastName} at ${companyName} (original: ${originalLeadId})`);
-            }
-
-            const leadToInsert = {
-                scrape_id: scrapeId,
-                user_id: userId,
-                first_name: firstName || null,
-                last_name: lastName || null,
-                title: lead.title?.trim() || null,
-                company_name: companyName,
-                company_linkedin: lead.company_linkedin?.trim() || null,
-                location: lead.location?.trim() || null,
-                company_size: lead.company_size?.trim() || null,
-                industry: lead.industry?.trim() || null,
-                website: lead.website?.trim() || null,
-                keywords: lead.keywords || [],
-                verification_status: 'pending',
-                verification_data: null,
-                phone_numbers: lead.phone_numbers || [],
-                linkedin_url: lead.linkedin_url?.trim() || null,
-                is_duplicate: isDuplicate,
-                original_lead_id: originalLeadId
-            };
-
-            const { data, error } = await supabase
-                .from('leads')
-                .insert(leadToInsert)
-                .select()
-                .single();
-
-            if (error) {
-                console.error(`[SCRAPE-QUEUE] Insert error for ${firstName} ${lastName}: ${error.message}`);
-                errors.push(`Failed to save ${firstName} ${lastName}: ${error.message}`);
-            } else if (data) {
-                processedCount++;
-            }
+        if (validLeads.length === 0) {
+            return { processedCount: 0, duplicateCount: 0, errors: [] };
         }
 
-        console.log(`[SCRAPE-QUEUE] Saved ${processedCount} leads (${duplicateCount} duplicates tracked)`);
-        return { processedCount, duplicateCount, errors };
+        // Prepare all leads for batch insert (NO duplicate check - that happens async)
+        const leadsToInsert = validLeads.map(lead => ({
+            scrape_id: scrapeId,
+            user_id: userId,
+            first_name: lead.first_name?.trim() || null,
+            last_name: lead.last_name?.trim() || null,
+            title: lead.title?.trim() || null,
+            company_name: lead.company_name?.trim() || null,
+            company_linkedin: lead.company_linkedin?.trim() || null,
+            location: lead.location?.trim() || null,
+            company_size: lead.company_size?.trim() || null,
+            industry: lead.industry?.trim() || null,
+            website: lead.website?.trim() || null,
+            keywords: lead.keywords || [],
+            verification_status: 'pending',
+            verification_data: null,
+            phone_numbers: lead.phone_numbers || [],
+            linkedin_url: lead.linkedin_url?.trim() || null,
+            is_duplicate: false,  // Will be updated async
+            original_lead_id: null  // Will be updated async
+        }));
+
+        // SINGLE batch insert - much faster than individual inserts
+        console.log(`[SCRAPE-QUEUE] Batch inserting ${leadsToInsert.length} leads...`);
+        const { data, error } = await supabase
+            .from('leads')
+            .insert(leadsToInsert)
+            .select('id');
+
+        if (error) {
+            console.error(`[SCRAPE-QUEUE] Batch insert error: ${error.message}`);
+            errors.push(`Batch insert failed: ${error.message}`);
+        } else {
+            processedCount = data?.length || 0;
+            console.log(`[SCRAPE-QUEUE] ✓ Batch inserted ${processedCount} leads`);
+            
+            // Trigger async duplicate marking (doesn't block the user)
+            this.markDuplicatesAsync(scrapeId).catch(err => {
+                console.error(`[SCRAPE-QUEUE] Async duplicate marking failed:`, err);
+            });
+        }
+
+        return { processedCount, duplicateCount: 0, errors };
+    }
+
+    /**
+     * Mark duplicates asynchronously AFTER leads are saved
+     * This runs in the background and doesn't block the scrape
+     */
+    async markDuplicatesAsync(scrapeId: string): Promise<void> {
+        console.log(`[SCRAPE-QUEUE] Starting async duplicate marking for scrape ${scrapeId}...`);
+        
+        try {
+            // Get all leads from this scrape
+            const { data: scrapeLeads, error: fetchError } = await supabase
+                .from('leads')
+                .select('id, first_name, last_name, company_name, created_at')
+                .eq('scrape_id', scrapeId);
+
+            if (fetchError || !scrapeLeads) {
+                console.error(`[SCRAPE-QUEUE] Failed to fetch leads for duplicate check:`, fetchError);
+                return;
+            }
+
+            let duplicateCount = 0;
+
+            // For each lead in this scrape, check if an older lead exists with same name/company
+            for (const lead of scrapeLeads) {
+                const { data: existingLead } = await supabase
+                    .from('leads')
+                    .select('id')
+                    .ilike('first_name', lead.first_name || '')
+                    .ilike('last_name', lead.last_name || '')
+                    .ilike('company_name', lead.company_name || '')
+                    .lt('created_at', lead.created_at)  // Only older leads
+                    .neq('id', lead.id)  // Not itself
+                    .limit(1)
+                    .single();
+
+                if (existingLead) {
+                    // Mark as duplicate
+                    await supabase
+                        .from('leads')
+                        .update({ 
+                            is_duplicate: true, 
+                            original_lead_id: existingLead.id 
+                        })
+                        .eq('id', lead.id);
+                    duplicateCount++;
+                }
+            }
+
+            console.log(`[SCRAPE-QUEUE] ✓ Async duplicate marking complete: ${duplicateCount} duplicates found`);
+        } catch (error) {
+            console.error(`[SCRAPE-QUEUE] Error in async duplicate marking:`, error);
+        }
     }
 
     /**
@@ -478,7 +551,7 @@ class ScrapeQueue {
     }
 
     /**
-     * Get queue status for a scrape
+     * Get queue status for a scrape with time estimates
      */
     async getQueueStatus(scrapeId: string): Promise<{
         status: 'pending' | 'running' | 'completed' | 'failed' | 'not_found';
@@ -488,6 +561,9 @@ class ScrapeQueue {
         errorMessage?: string;
         startedAt?: string;
         completedAt?: string;
+        estimatedTimeRemaining?: number;
+        estimatedCompletionTime?: string;
+        timeEstimateFormatted?: string;
     }> {
         const { data, error } = await supabase
             .from('scrape_queue')
@@ -502,6 +578,14 @@ class ScrapeQueue {
         }
 
         let position: number | undefined;
+        let estimatedTimeRemaining: number | undefined;
+        let estimatedCompletionTime: string | undefined;
+        let timeEstimateFormatted: string | undefined;
+
+        // Calculate time estimates based on status
+        const pages = 1; // Default pages per scrape
+        const { avgSeconds } = estimateScrapeTime(pages);
+
         if (data.status === 'pending') {
             const { count } = await supabase
                 .from('scrape_queue')
@@ -509,6 +593,20 @@ class ScrapeQueue {
                 .eq('status', 'pending')
                 .lt('created_at', data.created_at);
             position = (count || 0) + 1;
+
+            // Estimate: (position in queue) * avg time per scrape
+            estimatedTimeRemaining = position * avgSeconds;
+            timeEstimateFormatted = formatTimeEstimate(estimatedTimeRemaining);
+            estimatedCompletionTime = new Date(Date.now() + estimatedTimeRemaining * 1000).toISOString();
+        } else if (data.status === 'running' && data.started_at) {
+            // Calculate elapsed time and estimate remaining
+            const elapsedMs = Date.now() - new Date(data.started_at).getTime();
+            const elapsedSeconds = Math.floor(elapsedMs / 1000);
+            const remaining = Math.max(0, avgSeconds - elapsedSeconds);
+            
+            estimatedTimeRemaining = remaining;
+            timeEstimateFormatted = remaining > 0 ? formatTimeEstimate(remaining) : 'Almost done...';
+            estimatedCompletionTime = new Date(Date.now() + remaining * 1000).toISOString();
         }
 
         return {
@@ -518,7 +616,10 @@ class ScrapeQueue {
             leadsFound: data.leads_found,
             errorMessage: data.error_message,
             startedAt: data.started_at,
-            completedAt: data.completed_at
+            completedAt: data.completed_at,
+            estimatedTimeRemaining,
+            estimatedCompletionTime,
+            timeEstimateFormatted
         };
     }
 

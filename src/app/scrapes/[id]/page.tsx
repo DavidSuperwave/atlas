@@ -110,6 +110,15 @@ export default function ScrapeDetailsPage() {
     // URL copy state
     const [urlCopied, setUrlCopied] = useState(false);
 
+    // Scrape status polling state (for queue position and time estimates)
+    const [scrapeStatus, setScrapeStatus] = useState<{
+        queuePosition?: number;
+        timeEstimateFormatted?: string;
+        estimatedTimeRemaining?: number;
+        message?: string;
+    } | null>(null);
+    const scrapePollingRef = useRef<NodeJS.Timeout | null>(null);
+
     const fetchData = useCallback(async () => {
         const supabase = getSupabaseClient();
         
@@ -170,6 +179,45 @@ export default function ScrapeDetailsPage() {
         pollingStartTimeRef.current = null;
     }, []);
 
+    // Fetch scrape status (for queue position and time estimates)
+    const fetchScrapeStatus = useCallback(async () => {
+        if (!id) return;
+        try {
+            const response = await apiFetch(`/api/scrape/${id}/status`);
+            if (response.ok) {
+                const data = await response.json();
+                setScrapeStatus({
+                    queuePosition: data.queuePosition,
+                    timeEstimateFormatted: data.timeEstimateFormatted,
+                    estimatedTimeRemaining: data.estimatedTimeRemaining,
+                    message: data.message
+                });
+                
+                // If scrape completed or failed, stop polling and refresh data
+                if (data.status === 'completed' || data.status === 'failed') {
+                    stopScrapePolling();
+                    fetchData();
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching scrape status:', error);
+        }
+    }, [id, fetchData]);
+
+    // Start polling for scrape status when scrape is running/queued
+    const startScrapePolling = useCallback(() => {
+        if (scrapePollingRef.current) return;
+        fetchScrapeStatus(); // Immediate fetch
+        scrapePollingRef.current = setInterval(fetchScrapeStatus, 2000); // Poll every 2 seconds
+    }, [fetchScrapeStatus]);
+
+    const stopScrapePolling = useCallback(() => {
+        if (scrapePollingRef.current) {
+            clearInterval(scrapePollingRef.current);
+            scrapePollingRef.current = null;
+        }
+    }, []);
+
     useEffect(() => {
         if (id && user && !authLoading) {
             fetchData();
@@ -177,6 +225,16 @@ export default function ScrapeDetailsPage() {
             setLoading(false);
         }
     }, [id, user, authLoading, fetchData]);
+
+    // Start scrape status polling if scrape is running or queued
+    useEffect(() => {
+        if (scrape && (scrape.status === 'running' || scrape.status === 'queued')) {
+            startScrapePolling();
+        } else {
+            stopScrapePolling();
+        }
+        return () => stopScrapePolling();
+    }, [scrape?.status, startScrapePolling, stopScrapePolling]);
 
     // Load campaign accounts from localStorage (with migration from old PlusVibe format)
     useEffect(() => {
@@ -747,12 +805,28 @@ export default function ScrapeDetailsPage() {
                                     </button>
                                     <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs font-medium">{leads.length}</span>
                                     {scrape && (
-                                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${scrape.status === 'completed' ? 'bg-green-100 text-green-700 border-green-200' :
-                                            scrape.status === 'failed' ? 'bg-red-100 text-red-700 border-red-200' :
-                                                'bg-yellow-100 text-yellow-700 border-yellow-200'
+                                        <div className="flex items-center gap-2">
+                                            <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border flex items-center gap-1.5 ${
+                                                scrape.status === 'completed' ? 'bg-green-100 text-green-700 border-green-200' :
+                                                scrape.status === 'failed' ? 'bg-red-100 text-red-700 border-red-200' :
+                                                scrape.status === 'running' ? 'bg-blue-100 text-blue-700 border-blue-200' :
+                                                    'bg-yellow-100 text-yellow-700 border-yellow-200'
                                             }`}>
-                                            {scrape.status.toUpperCase()}
-                                        </span>
+                                                {(scrape.status === 'running' || scrape.status === 'queued') && (
+                                                    <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                    </svg>
+                                                )}
+                                                {scrape.status.toUpperCase()}
+                                            </span>
+                                            {/* Time estimate for running/queued scrapes */}
+                                            {scrapeStatus?.message && (scrape.status === 'running' || scrape.status === 'queued') && (
+                                                <span className="text-xs text-gray-500">
+                                                    {scrapeStatus.message}
+                                                </span>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
                                 {/* Campaign Tags */}

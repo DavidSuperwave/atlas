@@ -1,10 +1,17 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/components/AuthProvider';
 import { getSupabaseClient } from '@/lib/supabase-client';
 import { apiFetch } from '@/lib/api-client';
+
+// Interface for scrape status with time estimates
+interface ScrapeStatusInfo {
+  queuePosition?: number;
+  timeEstimateFormatted?: string;
+  message?: string;
+}
 
 // Tag color palette for visual distinction - muted modern palette
 const TAG_COLORS = [
@@ -45,6 +52,10 @@ export default function DashboardPage() {
   const [showTagDropdown, setShowTagDropdown] = useState(false);
   const [showTagInput, setShowTagInput] = useState(false);
 
+  // Active scrape status tracking (for time estimates)
+  const [activeScrapeStatuses, setActiveScrapeStatuses] = useState<Record<string, ScrapeStatusInfo>>({});
+  const statusPollingRef = useRef<NodeJS.Timeout | null>(null);
+
   useEffect(() => {
     if (user) {
       fetchScrapes();
@@ -52,6 +63,59 @@ export default function DashboardPage() {
       setFetchingData(false);
     }
   }, [user, authLoading]);
+
+  // Get active (running/queued) scrapes
+  const activeScrapes = useMemo(() => {
+    return scrapes.filter(s => s.status === 'running' || s.status === 'queued');
+  }, [scrapes]);
+
+  // Fetch status for active scrapes
+  const fetchActiveScrapeStatuses = useCallback(async () => {
+    if (activeScrapes.length === 0) return;
+    
+    const statuses: Record<string, ScrapeStatusInfo> = {};
+    await Promise.all(
+      activeScrapes.map(async (scrape) => {
+        try {
+          const response = await apiFetch(`/api/scrape/${scrape.id}/status`);
+          if (response.ok) {
+            const data = await response.json();
+            statuses[scrape.id] = {
+              queuePosition: data.queuePosition,
+              timeEstimateFormatted: data.timeEstimateFormatted,
+              message: data.message
+            };
+            
+            // If status changed to completed, refresh scrapes
+            if (data.status === 'completed' && scrape.status !== 'completed') {
+              fetchScrapes();
+            }
+          }
+        } catch (error) {
+          console.error(`Error fetching status for scrape ${scrape.id}:`, error);
+        }
+      })
+    );
+    setActiveScrapeStatuses(statuses);
+  }, [activeScrapes]);
+
+  // Poll for active scrape statuses
+  useEffect(() => {
+    if (activeScrapes.length > 0) {
+      fetchActiveScrapeStatuses();
+      statusPollingRef.current = setInterval(fetchActiveScrapeStatuses, 3000);
+    } else {
+      if (statusPollingRef.current) {
+        clearInterval(statusPollingRef.current);
+        statusPollingRef.current = null;
+      }
+    }
+    return () => {
+      if (statusPollingRef.current) {
+        clearInterval(statusPollingRef.current);
+      }
+    };
+  }, [activeScrapes.length, fetchActiveScrapeStatuses]);
 
   // Get all unique tags from scrapes for filter dropdown
   const allTags = useMemo(() => {
@@ -515,13 +579,29 @@ export default function DashboardPage() {
 
                   {/* Status & Meta Row */}
                   <div className="flex items-center justify-between md:justify-end gap-4 w-full md:w-auto min-w-0">
-                    {/* Status Badge */}
-                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${scrape.status === 'completed' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' :
-                      scrape.status === 'failed' ? 'bg-red-100 text-red-700 border border-red-200' :
-                        'bg-amber-100 text-amber-700 border border-amber-200'
+                    {/* Status Badge with Time Estimate */}
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium whitespace-nowrap flex items-center gap-1.5 ${
+                        scrape.status === 'completed' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' :
+                        scrape.status === 'failed' ? 'bg-red-100 text-red-700 border border-red-200' :
+                        scrape.status === 'running' ? 'bg-blue-100 text-blue-700 border border-blue-200' :
+                          'bg-amber-100 text-amber-700 border border-amber-200'
                       }`}>
-                      {scrape.status.toUpperCase()}
-                    </span>
+                        {(scrape.status === 'running' || scrape.status === 'queued') && (
+                          <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                        )}
+                        {scrape.status.toUpperCase()}
+                      </span>
+                      {/* Time estimate for active scrapes */}
+                      {activeScrapeStatuses[scrape.id]?.timeEstimateFormatted && (
+                        <span className="text-xs text-zinc-500 whitespace-nowrap">
+                          {activeScrapeStatuses[scrape.id].timeEstimateFormatted}
+                        </span>
+                      )}
+                    </div>
 
                     {/* Leads Count */}
                     <div className="text-center min-w-[60px]">
