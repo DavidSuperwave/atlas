@@ -80,7 +80,10 @@ export default function Sidebar() {
 
   // Hide sidebar on public routes (AFTER all hooks)
   // Only check after mount to prevent hydration mismatch
-  if (mounted && PUBLIC_ROUTES.some(route => pathname?.startsWith(route))) {
+  // Use exact match for root '/' to avoid matching all paths
+  if (mounted && PUBLIC_ROUTES.some(route => 
+    route === '/' ? pathname === '/' : pathname?.startsWith(route)
+  )) {
     return null;
   }
 

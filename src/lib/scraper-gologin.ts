@@ -473,7 +473,16 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
         console.error('[GOLOGIN-SCRAPER] Scrape failed:', error);
         throw error;
     } finally {
-        if (page) await page.close();
+        // Safely close the page, handling connection closed errors
+        if (page) {
+            try {
+                await page.close();
+            } catch (closeError) {
+                // Connection may already be closed - this is not a critical error
+                console.log('[GOLOGIN-SCRAPER] Page close warning (connection may have been closed):', 
+                    closeError instanceof Error ? closeError.message : 'Unknown error');
+            }
+        }
     }
 }
 
