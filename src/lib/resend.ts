@@ -14,8 +14,31 @@ function getResendClient(): Resend {
     return resendClient;
 }
 
-// Default sender email
-export const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'noreply@example.com';
+// Get sender email from environment - required, no fallback
+function getFromEmail(): string {
+    const fromEmail = process.env.RESEND_FROM_EMAIL;
+    if (!fromEmail) {
+        throw new Error(
+            'RESEND_FROM_EMAIL environment variable is required. ' +
+            'Set it to an email address using your verified domain (e.g., noreply@atlasv2.com). ' +
+            'Verify your domain at https://resend.com/domains'
+        );
+    }
+    
+    // Basic email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(fromEmail)) {
+        throw new Error(
+            `RESEND_FROM_EMAIL "${fromEmail}" is not a valid email format. ` +
+            'Use format: noreply@yourdomain.com'
+        );
+    }
+    
+    return fromEmail;
+}
+
+// Export for use in email sending
+export const FROM_EMAIL = getFromEmail();
 
 // Helper to send emails
 export async function sendEmail({

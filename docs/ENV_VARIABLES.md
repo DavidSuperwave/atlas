@@ -96,6 +96,29 @@ MAILTESTER_API_KEY_3=your-third-key
 
 *At least one API key is required.
 
+### Email Service (Resend) - For Invite Emails
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `RESEND_API_KEY` | Yes* | Resend API key from dashboard |
+| `RESEND_FROM_EMAIL` | Yes* | Sender email using your verified domain |
+
+*Required if using the invite system to send emails.
+
+**Example:**
+```bash
+RESEND_API_KEY=re_xxxxxxxxxxxx
+RESEND_FROM_EMAIL=noreply@atlasv2.com
+```
+
+**Setup Steps:**
+1. Create account at [resend.com](https://resend.com)
+2. Go to [Domains](https://resend.com/domains) and add your domain
+3. Add the required DNS records (MX, TXT, DKIM)
+4. Wait for domain verification (usually 5-10 minutes)
+5. Get API key from [API Keys](https://resend.com/api-keys)
+6. Set `RESEND_FROM_EMAIL` to an address using your verified domain
+
 ### Application Configuration
 
 | Variable | Required | Default | Description |

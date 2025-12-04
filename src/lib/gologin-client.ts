@@ -163,19 +163,37 @@ export class GoLoginClient {
             }
 
             const data = await response.json();
-            const profiles = Array.isArray(data.profiles) ? data.profiles : (Array.isArray(data) ? data : []);
+            
+            // Debug: Log the full response to understand structure
+            console.log('[GOLOGIN-CLIENT] Raw API response:', JSON.stringify(data, null, 2));
+            
+            // Handle different response structures
+            let profiles: any[] = [];
+            if (Array.isArray(data.profiles)) {
+                profiles = data.profiles;
+            } else if (Array.isArray(data)) {
+                profiles = data;
+            } else if (data.data && Array.isArray(data.data)) {
+                profiles = data.data;
+            } else if (data.results && Array.isArray(data.results)) {
+                profiles = data.results;
+            }
+            
+            console.log(`[GOLOGIN-CLIENT] Found ${profiles.length} profiles`);
             
             return {
                 success: true,
                 profiles: profiles.map((p: any) => ({
-                    id: p.id,
-                    name: p.name,
-                    notes: p.notes,
-                    browserType: p.browserType,
-                    os: p.os,
+                    id: p.id || p.profileId,
+                    name: p.name || p.profileName || 'Unnamed Profile',
+                    notes: p.notes || p.description,
+                    browserType: p.browserType || p.browser_type,
+                    os: p.os || p.operatingSystem,
                     proxy: p.proxy,
-                    createdAt: p.createdAt,
-                    updatedAt: p.updatedAt
+                    createdAt: p.createdAt || p.created_at,
+                    updatedAt: p.updatedAt || p.updated_at,
+                    // Include all fields for debugging
+                    _raw: p
                 })),
                 total: profiles.length
             };

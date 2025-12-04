@@ -333,12 +333,6 @@ export default function GoLoginProfilesPage() {
                                     Retry
                                 </button>
                             </div>
-                        ) : notAddedProfiles.length === 0 ? (
-                            <div className="text-gray-600 text-sm">
-                                {availableProfiles.length === 0 
-                                    ? 'No profiles found in your GoLogin account'
-                                    : 'All available profiles have already been added'}
-                            </div>
                         ) : (
                             <div className="space-y-2">
                                 <select
@@ -347,15 +341,22 @@ export default function GoLoginProfilesPage() {
                                     className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
                                 >
                                     <option value="">Select a profile from GoLogin...</option>
-                                    {notAddedProfiles.map((p) => (
-                                        <option key={p.id} value={p.id}>
-                                            {p.name} ({p.browserType || 'Unknown browser'})
+                                    {availableProfiles.map((p) => (
+                                        <option key={p.id} value={p.id} disabled={p.alreadyAdded}>
+                                            {p.name} ({p.browserType || 'Unknown browser'}) {p.alreadyAdded ? '(Already Added)' : ''}
                                         </option>
                                     ))}
                                 </select>
                                 <p className="text-xs text-blue-700">
-                                    Found {availableProfiles.length} profile(s) in GoLogin, {notAddedProfiles.length} not yet added
+                                    Found {availableProfiles.length} profile(s) in GoLogin
+                                    {notAddedProfiles.length > 0 && `, ${notAddedProfiles.length} available to add`}
+                                    {availableProfiles.length - notAddedProfiles.length > 0 && `, ${availableProfiles.length - notAddedProfiles.length} already added`}
                                 </p>
+                                {availableProfiles.length > 0 && (
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        Can't find your profile? Check the browser console for full API response, or enter the Profile ID manually below.
+                                    </p>
+                                )}
                             </div>
                         )}
                     </div>
@@ -368,12 +369,22 @@ export default function GoLoginProfilesPage() {
                             <input
                                 type="text"
                                 value={newProfile.profile_id}
-                                onChange={(e) => setNewProfile({ ...newProfile, profile_id: e.target.value })}
-                                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-50"
+                                onChange={(e) => {
+                                    setNewProfile({ ...newProfile, profile_id: e.target.value });
+                                    // Clear selection if manually edited
+                                    if (selectedAvailableProfile && e.target.value !== selectedAvailableProfile) {
+                                        setSelectedAvailableProfile('');
+                                    }
+                                }}
+                                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                                 placeholder="Select from dropdown above or enter manually"
                                 required
-                                readOnly={!!selectedAvailableProfile}
                             />
+                            {selectedAvailableProfile && (
+                                <p className="text-xs text-gray-500 mt-1">
+                                    Auto-filled from selection. You can edit this if needed.
+                                </p>
+                            )}
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">

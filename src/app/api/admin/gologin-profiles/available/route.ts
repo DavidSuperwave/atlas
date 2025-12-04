@@ -84,12 +84,21 @@ export async function GET() {
             alreadyAdded: existingIds.has(p.id)
         }));
 
+        // Log for debugging
+        console.log(`[ADMIN-AVAILABLE-PROFILES] Found ${result.profiles.length} profiles from GoLogin`);
+        console.log(`[ADMIN-AVAILABLE-PROFILES] Profile IDs: ${result.profiles.map(p => p.id).join(', ')}`);
+
         return NextResponse.json({
             success: true,
             profiles: profilesWithStatus,
             total: result.total,
             configured: true,
-            available: true
+            available: true,
+            debug: {
+                totalFromGoLogin: result.total,
+                alreadyInDatabase: existingIds.size,
+                availableToAdd: profilesWithStatus.filter(p => !p.alreadyAdded).length
+            }
         });
 
     } catch (error) {
