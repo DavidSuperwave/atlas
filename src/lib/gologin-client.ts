@@ -28,20 +28,27 @@ const GOLOGIN_API_URL = 'https://api.gologin.com';
 /** GoLogin Cloud Browser WebSocket URL */
 const GOLOGIN_CLOUD_WS_URL = 'https://cloudbrowser.gologin.com';
 
-/** Debug mode flag */
-const DEBUG = process.env.GOLOGIN_DEBUG === 'true';
+/** 
+ * Check if debug mode is enabled (runtime check)
+ */
+function isDebugMode(): boolean {
+    return process.env.GOLOGIN_DEBUG === 'true';
+}
 
 /** 
- * Cloud mode flag - when true, uses GoLogin's cloud browser instead of local
- * This is REQUIRED for serverless environments like Railway/Vercel
+ * Check if cloud mode is enabled (runtime check)
+ * This MUST be a function, not a constant, because environment variables
+ * are only available at runtime on platforms like Railway
  */
-const CLOUD_MODE = process.env.GOLOGIN_CLOUD_MODE === 'true';
+function isCloudMode(): boolean {
+    return process.env.GOLOGIN_CLOUD_MODE === 'true';
+}
 
 /**
  * Debug log helper - only logs when GOLOGIN_DEBUG=true
  */
 function debugLog(message: string, data?: unknown): void {
-    if (DEBUG) {
+    if (isDebugMode()) {
         if (data) {
             console.log(`[GOLOGIN-DEBUG] ${message}`, data);
         } else {
@@ -145,7 +152,7 @@ export class GoLoginClient {
         }
 
         // Log the mode being used
-        console.log(`[GOLOGIN-CLIENT] Mode: ${CLOUD_MODE ? 'CLOUD (GoLogin cloud browser)' : 'LOCAL (Orbita SDK)'}`);
+        console.log(`[GOLOGIN-CLIENT] Mode: ${isCloudMode() ? 'CLOUD (GoLogin cloud browser)' : 'LOCAL (Orbita SDK)'}`);
     }
 
     /**
@@ -304,7 +311,7 @@ export class GoLoginClient {
         }
 
         // Use cloud mode for serverless environments (Railway, Vercel)
-        if (CLOUD_MODE) {
+        if (isCloudMode()) {
             return this.startCloudProfile(id);
         }
 
@@ -433,7 +440,7 @@ export class GoLoginClient {
             
             // In cloud mode, we don't have a local SDK instance
             // Just remove from cache - GoLogin cloud handles session cleanup
-            if (CLOUD_MODE || !running.glInstance) {
+            if (isCloudMode() || !running.glInstance) {
                 console.log(`[GOLOGIN-CLIENT] Cloud mode - removing from cache`);
             } else {
                 // Local mode - stop using the SDK instance
@@ -676,15 +683,16 @@ export class GoLoginClient {
      */
     async getDiagnosticReport(): Promise<string> {
         const v = await this.validateConfiguration();
+        const cloudMode = isCloudMode();
         const lines = [
             '=== GoLogin Diagnostic Report ===',
-            `Mode: ${CLOUD_MODE ? 'CLOUD (serverless-compatible)' : 'LOCAL (requires display)'}`,
+            `Mode: ${cloudMode ? 'CLOUD (serverless-compatible)' : 'LOCAL (requires display)'}`,
             `API Token: ${this.apiToken ? 'SET' : 'NOT SET'}`,
             `API Valid: ${v.apiTokenValid ? 'Yes' : 'No'}`,
             `Profile ID: ${this.profileId || 'NOT SET'}`,
             `Profile Exists: ${v.profileExists ? 'Yes' : 'No'}`,
         ];
-        if (CLOUD_MODE) {
+        if (cloudMode) {
             lines.push(`Cloud URL: ${GOLOGIN_CLOUD_WS_URL}`);
         } else {
             lines.push(`SDK: Using official gologin npm package`);
