@@ -263,8 +263,24 @@ export class GoLoginClient {
         try {
             console.log(`[GOLOGIN-CLIENT] Starting profile: ${id}`);
             
-            // Start the profile via GoLogin API
-            const response = await fetch(`${GOLOGIN_API_URL}/browser/v2/${id}/start`, {
+            // First verify the profile exists in the account
+            const profileCheck = await this.getProfile(id);
+            if (!profileCheck) {
+                // Profile not found - list available profiles for debugging
+                const allProfiles = await this.listProfiles();
+                console.error(`[GOLOGIN-CLIENT] Profile ${id} not found in account!`);
+                console.error(`[GOLOGIN-CLIENT] Available profiles: ${JSON.stringify(allProfiles.profiles.map(p => ({ id: p.id, name: p.name })))}`);
+                return {
+                    success: false,
+                    wsEndpoint: '',
+                    error: `Profile ${id} not found in your GoLogin account. Please verify the profile ID.`
+                };
+            }
+            
+            console.log(`[GOLOGIN-CLIENT] Profile found: ${profileCheck.name}`);
+            
+            // Start the profile via GoLogin API (Note: start endpoint does NOT use v2)
+            const response = await fetch(`${GOLOGIN_API_URL}/browser/${id}/start`, {
                 method: 'POST',
                 headers: this.getHeaders(),
                 body: JSON.stringify({
@@ -287,7 +303,7 @@ export class GoLoginClient {
             
             if (!wsEndpoint) {
                 // Try alternative: Get remote debugging URL
-                const statusResponse = await fetch(`${GOLOGIN_API_URL}/browser/v2/${id}/status`, {
+                const statusResponse = await fetch(`${GOLOGIN_API_URL}/browser/${id}/status`, {
                     method: 'GET',
                     headers: this.getHeaders()
                 });
@@ -345,7 +361,8 @@ export class GoLoginClient {
         try {
             console.log(`[GOLOGIN-CLIENT] Stopping profile: ${id}`);
             
-            const response = await fetch(`${GOLOGIN_API_URL}/browser/v2/${id}/stop`, {
+            // Note: stop endpoint does NOT use v2
+            const response = await fetch(`${GOLOGIN_API_URL}/browser/${id}/stop`, {
                 method: 'POST',
                 headers: this.getHeaders()
             });
@@ -414,7 +431,7 @@ export class GoLoginClient {
 
             // Check via API
             try {
-                const statusResponse = await fetch(`${GOLOGIN_API_URL}/browser/v2/${id}/status`, {
+                const statusResponse = await fetch(`${GOLOGIN_API_URL}/browser/${id}/status`, {
                     method: 'GET',
                     headers: this.getHeaders()
                 });
