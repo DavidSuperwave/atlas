@@ -25,6 +25,7 @@ export default function AccessRequestsPage() {
     const [error, setError] = useState<string | null>(null);
     const [filter, setFilter] = useState<string>('pending');
     const [sendingInvite, setSendingInvite] = useState<string | null>(null);
+    const [resendingInvite, setResendingInvite] = useState<string | null>(null);
     const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
     const fetchRequests = useCallback(async () => {
@@ -75,7 +76,15 @@ export default function AccessRequestsPage() {
                 return;
             }
 
-            setActionMessage({ type: 'success', text: `Invite sent to ${request.email}` });
+            // Check if email was actually sent
+            if (data.emailSent === false) {
+                setActionMessage({ 
+                    type: 'error', 
+                    text: `Invite created but email failed to send: ${data.emailError || 'Unknown error'}. User can still use the invite link.` 
+                });
+            } else {
+                setActionMessage({ type: 'success', text: `Onboarding invite sent to ${request.email}` });
+            }
             fetchRequests();
         } catch (err) {
             setActionMessage({ type: 'error', text: 'Failed to send invite' });
@@ -108,6 +117,39 @@ export default function AccessRequestsPage() {
             fetchRequests();
         } catch (err) {
             setActionMessage({ type: 'error', text: 'Failed to reject request' });
+        }
+    }
+
+    async function handleResend(request: AccessRequest) {
+        if (!request.invite_id) {
+            setActionMessage({ type: 'error', text: 'No invite found for this request' });
+            return;
+        }
+
+        setResendingInvite(request.id);
+        setActionMessage(null);
+
+        try {
+            const res = await fetch('/api/admin/invites/resend', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    inviteId: request.invite_id,
+                }),
+            });
+
+            const data = await res.json();
+
+            if (!res.ok) {
+                setActionMessage({ type: 'error', text: data.error || 'Failed to resend invite' });
+                return;
+            }
+
+            setActionMessage({ type: 'success', text: `Onboarding email resent to ${request.email}` });
+        } catch (err) {
+            setActionMessage({ type: 'error', text: 'Failed to resend invite' });
+        } finally {
+            setResendingInvite(null);
         }
     }
 
@@ -268,6 +310,32 @@ export default function AccessRequestsPage() {
                                                 className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-lg transition-colors"
                                             >
                                                 Reject
+                                            </button>
+                                        </div>
+                                    )}
+                                    {request.status === 'approved' && request.invite_id && (
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => handleResend(request)}
+                                                disabled={resendingInvite === request.id}
+                                                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                            >
+                                                {resendingInvite === request.id ? (
+                                                    <>
+                                                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                                        </svg>
+                                                        Resending...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                                        </svg>
+                                                        Resend Email
+                                                    </>
+                                                )}
                                             </button>
                                         </div>
                                     )}

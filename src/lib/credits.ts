@@ -197,6 +197,26 @@ export function calculateCreditCost(credits: number): number {
 }
 
 /**
+ * Get total credits purchased (sum of all topups and refunds)
+ */
+export async function getTotalCreditsPurchased(userId: string): Promise<number> {
+    const supabase = createServerClient();
+    
+    const { data, error } = await supabase
+        .from('credit_transactions')
+        .select('amount')
+        .eq('user_id', userId)
+        .in('type', ['topup', 'refund']);
+    
+    if (error) {
+        console.error('Error fetching total credits purchased:', error);
+        return 0;
+    }
+    
+    return data?.reduce((sum, tx) => sum + (tx.amount || 0), 0) ?? 0;
+}
+
+/**
  * Calculate credits from dollar amount
  * $1 = 1000 credits
  */

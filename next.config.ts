@@ -5,6 +5,8 @@ const nextConfig: NextConfig = {
   /* config options here */
   reactCompiler: true,
   serverExternalPackages: ['puppeteer', 'gologin'],
+  // Silence Turbopack warning - we're using webpack for compatibility
+  turbopack: {},
   // Use webpack instead of Turbopack for better compatibility
   // Turbopack has issues with Google Fonts and some packages
   webpack: (config, { isServer }) => {

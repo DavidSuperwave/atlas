@@ -64,6 +64,27 @@ export async function sendEmail({
 
         if (error) {
             console.error('Error sending email:', error);
+            
+            // Provide more helpful error messages for common issues
+            if (error.message.includes('domain')) {
+                throw new Error(
+                    `Domain verification required: ${error.message}. ` +
+                    'Verify your domain at https://resend.com/domains'
+                );
+            }
+            if (error.message.includes('rate limit')) {
+                throw new Error(
+                    `Rate limit exceeded: ${error.message}. ` +
+                    'Try again in a few minutes.'
+                );
+            }
+            if (error.message.includes('invalid')) {
+                throw new Error(
+                    `Invalid email configuration: ${error.message}. ` +
+                    'Check your RESEND_FROM_EMAIL setting.'
+                );
+            }
+            
             throw new Error(error.message);
         }
 
@@ -71,5 +92,16 @@ export async function sendEmail({
     } catch (error) {
         console.error('Failed to send email:', error);
         throw error;
+    }
+}
+
+// Check if email is configured (useful for checking before operations)
+export function isEmailConfigured(): boolean {
+    try {
+        const apiKey = process.env.RESEND_API_KEY;
+        const fromEmail = process.env.RESEND_FROM_EMAIL;
+        return !!(apiKey && fromEmail);
+    } catch {
+        return false;
     }
 }

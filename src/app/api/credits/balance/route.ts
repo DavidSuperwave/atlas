@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser, getUserProfile } from '@/lib/supabase-server';
+import { getTotalCreditsPurchased } from '@/lib/credits';
 
 export async function GET() {
     try {
@@ -21,8 +22,11 @@ export async function GET() {
             );
         }
 
+        const totalPurchased = await getTotalCreditsPurchased(user.id);
+
         return NextResponse.json({
             balance: profile.credits_balance,
+            totalPurchased,
             email: profile.email,
             is_admin: profile.is_admin,
         });

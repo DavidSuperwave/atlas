@@ -11,6 +11,7 @@
 -- 2. Campaign Fields (adds name, tags to scrapes)
 -- 3. Scraper Mode (adds scraper_mode to scrapes)
 -- 4. GoLogin Profiles (creates gologin tables, adds gologin_profile_id to scrapes)
+-- 5. Duplicate Tracking (adds is_duplicate, original_lead_id to leads, removes unique constraint)
 -- ============================================================
 
 -- ============================================================
@@ -366,6 +367,64 @@ ALTER TABLE scrapes ADD COLUMN IF NOT EXISTS gologin_profile_id UUID REFERENCES 
 
 
 -- ============================================================
+-- PART 5: DUPLICATE TRACKING
+-- ============================================================
+-- Source: add_duplicate_tracking.sql
+-- Allows duplicate leads and tracks them for analytics
+
+-- Add columns to track duplicates
+ALTER TABLE leads 
+ADD COLUMN IF NOT EXISTS is_duplicate boolean DEFAULT false,
+ADD COLUMN IF NOT EXISTS original_lead_id uuid REFERENCES leads(id) ON DELETE SET NULL;
+
+-- Drop the global unique constraint (try multiple common constraint names)
+DO $$ 
+BEGIN
+    ALTER TABLE leads DROP CONSTRAINT IF EXISTS leads_first_name_last_name_company_name_key;
+EXCEPTION WHEN undefined_object THEN
+    NULL;
+END $$;
+
+DO $$ 
+BEGIN
+    ALTER TABLE leads DROP CONSTRAINT IF EXISTS leads_first_name_last_name_company_name_unique;
+EXCEPTION WHEN undefined_object THEN
+    NULL;
+END $$;
+
+-- Drop any unnamed unique constraint on these columns
+DO $$
+DECLARE
+    constraint_name text;
+BEGIN
+    SELECT conname INTO constraint_name
+    FROM pg_constraint c
+    JOIN pg_class t ON c.conrelid = t.oid
+    WHERE t.relname = 'leads'
+    AND c.contype = 'u'
+    AND array_length(c.conkey, 1) = 3;
+    
+    IF constraint_name IS NOT NULL THEN
+        EXECUTE 'ALTER TABLE leads DROP CONSTRAINT IF EXISTS ' || quote_ident(constraint_name);
+    END IF;
+END $$;
+
+-- Create index for efficient duplicate lookups (case-insensitive)
+CREATE INDEX IF NOT EXISTS idx_leads_duplicate_lookup 
+ON leads (LOWER(TRIM(first_name)), LOWER(TRIM(last_name)), LOWER(TRIM(company_name)));
+
+-- Create index for original_lead_id for reverse lookups
+CREATE INDEX IF NOT EXISTS idx_leads_original_lead_id ON leads(original_lead_id);
+
+-- Create index for is_duplicate for filtering
+CREATE INDEX IF NOT EXISTS idx_leads_is_duplicate ON leads(is_duplicate);
+
+-- Add comments explaining the duplicate tracking system
+COMMENT ON COLUMN leads.is_duplicate IS 'True if this lead was scraped when a lead with the same name/company already existed';
+COMMENT ON COLUMN leads.original_lead_id IS 'References the original lead if this is a duplicate';
+
+
+-- ============================================================
 -- VERIFICATION QUERIES
 -- ============================================================
 -- Run these to verify all columns were added successfully
@@ -381,7 +440,7 @@ SELECT 'VERIFYING LEADS TABLE COLUMNS...' AS status;
 SELECT column_name, data_type, is_nullable 
 FROM information_schema.columns 
 WHERE table_name = 'leads' 
-AND column_name IN ('user_id', 'credits_used', 'api_key_used')
+AND column_name IN ('user_id', 'credits_used', 'api_key_used', 'is_duplicate', 'original_lead_id')
 ORDER BY column_name;
 
 SELECT 'VERIFYING TABLES CREATED...' AS status;

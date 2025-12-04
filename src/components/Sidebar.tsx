@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from './AuthProvider';
 import { signOut, getUserProfile } from '@/lib/supabase-client';
-import CreditBalance from './CreditBalance';
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -15,6 +14,9 @@ export default function Sidebar() {
   const [isMobile, setIsMobile] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
+  const [totalPurchased, setTotalPurchased] = useState<number | null>(null);
+  const [creditsLoading, setCreditsLoading] = useState(true);
 
   // Check if user is admin
   useEffect(() => {
@@ -27,6 +29,29 @@ export default function Sidebar() {
       }
     }
     checkAdmin();
+  }, [user]);
+
+  // Fetch credits
+  useEffect(() => {
+    async function fetchCredits() {
+      if (!user) {
+        setCreditsLoading(false);
+        return;
+      }
+      try {
+        const res = await fetch('/api/credits/balance');
+        if (res.ok) {
+          const data = await res.json();
+          setCreditBalance(data.balance);
+          setTotalPurchased(data.totalPurchased);
+        }
+      } catch (error) {
+        console.error('Error fetching credits:', error);
+      } finally {
+        setCreditsLoading(false);
+      }
+    }
+    fetchCredits();
   }, [user]);
 
   // Handle mobile responsive state
@@ -103,15 +128,25 @@ export default function Sidebar() {
           <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
         </svg>
       )
+    }
+  ];
+
+  const comingSoonItems = [
+    {
+      name: 'Google Scraper',
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="11" cy="11" r="8" />
+          <path d="m21 21-4.3-4.3" />
+        </svg>
+      )
     },
     {
-      name: 'Credits',
-      path: '/credits',
+      name: 'Aged Domains',
       icon: (
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10" />
-          <path d="M12 6v12" />
-          <path d="M15 9.5a3.5 3.5 0 0 0-3-1.5c-2 0-3 1-3 2.5s1.5 2 3 2.5 3 1 3 2.5-1 2.5-3 2.5a3.5 3.5 0 0 1-3-1.5" />
+          <polyline points="12 6 12 12 16 14" />
         </svg>
       )
     }
@@ -175,6 +210,16 @@ export default function Sidebar() {
           <path d="M16 3.13a4 4 0 010 7.75" />
         </svg>
       )
+    },
+    {
+      name: 'Credit Orders',
+      path: '/admin/credit-orders',
+      icon: (
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 8v4l3 3" />
+          <circle cx="12" cy="12" r="10" />
+        </svg>
+      )
     }
   ];
 
@@ -217,10 +262,10 @@ export default function Sidebar() {
         </button>
       </div>
 
-      {/* User Info & Credits (when expanded) */}
+      {/* User Info (when expanded) */}
       {!isCollapsed && user && (
         <div className="px-3 py-3 border-b border-zinc-800/50">
-          <div className="flex items-center gap-2.5 mb-2.5">
+          <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-md bg-zinc-800 flex items-center justify-center ring-1 ring-zinc-700/50">
               <span className="text-zinc-300 font-medium text-xs">
                 {getDisplayName(user.email).charAt(0).toUpperCase()}
@@ -237,7 +282,6 @@ export default function Sidebar() {
               </div>
             </div>
           </div>
-          <CreditBalance compact />
         </div>
       )}
 
@@ -275,6 +319,37 @@ export default function Sidebar() {
             </Link>
           );
         })}
+
+        {/* Coming Soon Items */}
+        {comingSoonItems.map((item) => (
+          <div
+            key={item.name}
+            className={`flex items-center gap-2.5 px-2.5 py-2 rounded-md cursor-not-allowed opacity-50 ${isCollapsed ? 'justify-center' : ''}`}
+            title={isCollapsed ? `${item.name} - Coming Soon` : ''}
+          >
+            <span className="flex-shrink-0 text-zinc-600">
+              {item.icon}
+            </span>
+            
+            {!isCollapsed && (
+              <>
+                <span className="text-sm font-medium text-zinc-600 truncate">
+                  {item.name}
+                </span>
+                <span className="ml-auto px-1.5 py-0.5 text-[9px] font-medium bg-zinc-800 text-zinc-500 rounded">
+                  Soon
+                </span>
+              </>
+            )}
+
+            {/* Tooltip for collapsed state */}
+            {isCollapsed && (
+              <div className="absolute left-full ml-2 px-2 py-1 bg-zinc-800 text-zinc-200 text-xs font-medium rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 border border-zinc-700/50">
+                {item.name} - Soon
+              </div>
+            )}
+          </div>
+        ))}
 
         {/* Admin Section */}
         {isAdmin && (
@@ -321,6 +396,72 @@ export default function Sidebar() {
           </>
         )}
       </nav>
+
+      {/* Tutorial Video Section */}
+      {!isCollapsed && (
+        <div className="px-3 py-3 border-t border-zinc-800/50">
+          <p className="text-[10px] font-medium text-zinc-500 mb-2">Watch this video to learn how to use it</p>
+          <div className="relative aspect-video rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800/50">
+            <iframe 
+              src="https://fast.wistia.net/embed/iframe/YOUR_VIDEO_ID?seo=true&videoFoam=false"
+              title="Tutorial Video"
+              allow="autoplay; fullscreen"
+              frameBorder="0"
+              className="absolute top-0 left-0 w-full h-full"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Credits Section */}
+      {!isCollapsed && user && (
+        <div className="px-3 py-3 border-t border-zinc-800/50">
+          {creditsLoading ? (
+            <div className="animate-pulse space-y-2">
+              <div className="h-3 bg-zinc-800 rounded w-20"></div>
+              <div className="h-2 bg-zinc-800 rounded w-full"></div>
+              <div className="h-8 bg-zinc-800 rounded w-full"></div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Credits</span>
+                <span className="text-xs text-zinc-400">
+                  {creditBalance?.toLocaleString() ?? 0} / {totalPurchased?.toLocaleString() ?? 0}
+                </span>
+              </div>
+              
+              {/* Progress Bar */}
+              <div className="h-2 bg-zinc-800 rounded-full overflow-hidden mb-3">
+                {(() => {
+                  const percentage = totalPurchased && totalPurchased > 0 
+                    ? Math.min(100, (creditBalance ?? 0) / totalPurchased * 100)
+                    : 0;
+                  const isLow = percentage < 30;
+                  return (
+                    <div 
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        isLow ? 'bg-red-500' : 'bg-gradient-to-r from-yellow-500 to-amber-400'
+                      }`}
+                      style={{ width: `${percentage}%` }}
+                    />
+                  );
+                })()}
+              </div>
+
+              <Link
+                href="/credits"
+                className="flex items-center justify-center gap-2 w-full px-3 py-2 bg-gradient-to-r from-amber-500/20 to-yellow-500/20 hover:from-amber-500/30 hover:to-yellow-500/30 border border-amber-500/30 text-amber-400 rounded-lg transition-all text-xs font-medium"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+                Buy More Credits
+              </Link>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Footer with Auth */}
       <div className="px-2 py-3 border-t border-zinc-800/50">

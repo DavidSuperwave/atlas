@@ -154,7 +154,24 @@ export async function POST(request: Request) {
 }
 
 /**
- * Batch save leads for better performance (legacy for non-queue modes)
+ * Check if a lead already exists in the database (duplicate detection)
+ * Returns the original lead ID if found, null otherwise
+ */
+async function findExistingLead(firstName: string, lastName: string, companyName: string | null): Promise<string | null> {
+    const { data } = await supabase
+        .from('leads')
+        .select('id')
+        .ilike('first_name', firstName.trim())
+        .ilike('last_name', lastName.trim())
+        .ilike('company_name', companyName?.trim() || '')
+        .limit(1)
+        .single();
+
+    return data?.id || null;
+}
+
+/**
+ * Save leads with duplicate tracking (legacy for non-queue modes)
  */
 async function batchSaveLeads(scrapeId: string, userId: string, leads: { 
     first_name?: string; 
@@ -172,19 +189,30 @@ async function batchSaveLeads(scrapeId: string, userId: string, leads: {
 }[]): Promise<{ processedCount: number; errors: string[] }> {
     const errors: string[] = [];
     let processedCount = 0;
+    let duplicateCount = 0;
     
-    const BATCH_SIZE = 50;
-    
-    for (let i = 0; i < leads.length; i += BATCH_SIZE) {
-        const batch = leads.slice(i, i + BATCH_SIZE);
-        
-        const leadsToInsert = batch.map(lead => ({
+    // Process leads individually to check for duplicates
+    for (const lead of leads) {
+        const firstName = lead.first_name?.trim() || '';
+        const lastName = lead.last_name?.trim() || '';
+        const companyName = lead.company_name?.trim() || null;
+
+        // Check for existing lead (duplicate detection)
+        const originalLeadId = await findExistingLead(firstName, lastName, companyName);
+        const isDuplicate = originalLeadId !== null;
+
+        if (isDuplicate) {
+            duplicateCount++;
+            console.log(`[SCRAPE-API] Duplicate detected: ${firstName} ${lastName} at ${companyName} (original: ${originalLeadId})`);
+        }
+
+        const leadToInsert = {
             scrape_id: scrapeId,
             user_id: userId,
-            first_name: lead.first_name?.trim() || null,
-            last_name: lead.last_name?.trim() || null,
+            first_name: firstName || null,
+            last_name: lastName || null,
             title: lead.title?.trim() || null,
-            company_name: lead.company_name?.trim() || null,
+            company_name: companyName,
             company_linkedin: lead.company_linkedin?.trim() || null,
             location: lead.location?.trim() || null,
             company_size: lead.company_size?.trim() || null,
@@ -194,38 +222,25 @@ async function batchSaveLeads(scrapeId: string, userId: string, leads: {
             verification_status: 'pending',
             verification_data: null,
             phone_numbers: lead.phone_numbers || [],
-            linkedin_url: lead.linkedin_url?.trim() || null
-        }));
+            linkedin_url: lead.linkedin_url?.trim() || null,
+            is_duplicate: isDuplicate,
+            original_lead_id: originalLeadId
+        };
 
         const { data, error } = await supabase
             .from('leads')
-            .insert(leadsToInsert)
-            .select();
+            .insert(leadToInsert)
+            .select()
+            .single();
 
         if (error) {
-            console.error(`Batch insert error: ${error.message}`);
-            
-            for (const leadData of leadsToInsert) {
-                const { data: singleData, error: singleError } = await supabase
-                    .from('leads')
-                    .insert(leadData)
-                    .select()
-                    .single();
-
-                if (singleError) {
-                    if (singleError.code === '23505') {
-                        console.log(`Duplicate lead skipped: ${leadData.first_name} ${leadData.last_name}`);
-                    } else {
-                        errors.push(`Failed to save ${leadData.first_name} ${leadData.last_name}: ${singleError.message}`);
-                    }
-                } else if (singleData) {
-                    processedCount++;
-                }
-            }
+            console.error(`[SCRAPE-API] Insert error for ${firstName} ${lastName}: ${error.message}`);
+            errors.push(`Failed to save ${firstName} ${lastName}: ${error.message}`);
         } else if (data) {
-            processedCount += data.length;
+            processedCount++;
         }
     }
 
+    console.log(`[SCRAPE-API] Saved ${processedCount} leads (${duplicateCount} duplicates tracked)`);
     return { processedCount, errors };
 }

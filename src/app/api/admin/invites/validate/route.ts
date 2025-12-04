@@ -33,9 +33,24 @@ export async function GET(request: Request) {
             return NextResponse.json({ valid: false, error: 'This invite has expired' }, { status: 400 });
         }
 
+        // Try to get name from access request if linked
+        let name = null;
+        if (invite.id) {
+            const { data: accessRequest } = await supabase
+                .from('access_requests')
+                .select('name')
+                .eq('invite_id', invite.id)
+                .single();
+            
+            if (accessRequest) {
+                name = accessRequest.name;
+            }
+        }
+
         return NextResponse.json({
             valid: true,
             email: invite.email,
+            name: name,
             expires_at: invite.expires_at,
         });
     } catch (error) {

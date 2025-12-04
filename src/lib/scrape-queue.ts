@@ -340,11 +340,29 @@ class ScrapeQueue {
     }
 
     /**
-     * Save leads to database (batch insert)
+     * Check if a lead already exists in the database (duplicate detection)
+     * Returns the original lead ID if found, null otherwise
      */
-    async saveLeads(scrapeId: string, userId: string, leads: ScrapedLead[]): Promise<{ processedCount: number; errors: string[] }> {
+    async findExistingLead(firstName: string, lastName: string, companyName: string | null): Promise<string | null> {
+        const { data } = await supabase
+            .from('leads')
+            .select('id')
+            .ilike('first_name', firstName.trim())
+            .ilike('last_name', lastName.trim())
+            .ilike('company_name', companyName?.trim() || '')
+            .limit(1)
+            .single();
+
+        return data?.id || null;
+    }
+
+    /**
+     * Save leads to database (batch insert) with duplicate tracking
+     */
+    async saveLeads(scrapeId: string, userId: string, leads: ScrapedLead[]): Promise<{ processedCount: number; duplicateCount: number; errors: string[] }> {
         const errors: string[] = [];
         let processedCount = 0;
+        let duplicateCount = 0;
 
         // Filter out invalid leads
         const validLeads = leads.filter(lead => {
@@ -354,19 +372,28 @@ class ScrapeQueue {
             return true;
         });
 
-        // Process in batches of 50
-        const BATCH_SIZE = 50;
-        
-        for (let i = 0; i < validLeads.length; i += BATCH_SIZE) {
-            const batch = validLeads.slice(i, i + BATCH_SIZE);
-            
-            const leadsToInsert = batch.map(lead => ({
+        // Process leads individually to check for duplicates
+        for (const lead of validLeads) {
+            const firstName = lead.first_name?.trim() || '';
+            const lastName = lead.last_name?.trim() || '';
+            const companyName = lead.company_name?.trim() || null;
+
+            // Check for existing lead (duplicate detection)
+            const originalLeadId = await this.findExistingLead(firstName, lastName, companyName);
+            const isDuplicate = originalLeadId !== null;
+
+            if (isDuplicate) {
+                duplicateCount++;
+                console.log(`[SCRAPE-QUEUE] Duplicate detected: ${firstName} ${lastName} at ${companyName} (original: ${originalLeadId})`);
+            }
+
+            const leadToInsert = {
                 scrape_id: scrapeId,
                 user_id: userId,
-                first_name: lead.first_name?.trim() || null,
-                last_name: lead.last_name?.trim() || null,
+                first_name: firstName || null,
+                last_name: lastName || null,
                 title: lead.title?.trim() || null,
-                company_name: lead.company_name?.trim() || null,
+                company_name: companyName,
                 company_linkedin: lead.company_linkedin?.trim() || null,
                 location: lead.location?.trim() || null,
                 company_size: lead.company_size?.trim() || null,
@@ -376,38 +403,27 @@ class ScrapeQueue {
                 verification_status: 'pending',
                 verification_data: null,
                 phone_numbers: lead.phone_numbers || [],
-                linkedin_url: lead.linkedin_url?.trim() || null
-            }));
+                linkedin_url: lead.linkedin_url?.trim() || null,
+                is_duplicate: isDuplicate,
+                original_lead_id: originalLeadId
+            };
 
             const { data, error } = await supabase
                 .from('leads')
-                .insert(leadsToInsert)
-                .select();
+                .insert(leadToInsert)
+                .select()
+                .single();
 
             if (error) {
-                console.error(`[SCRAPE-QUEUE] Batch insert error: ${error.message}`);
-                // Fall back to individual inserts
-                for (const leadData of leadsToInsert) {
-                    const { data: singleData, error: singleError } = await supabase
-                        .from('leads')
-                        .insert(leadData)
-                        .select()
-                        .single();
-
-                    if (singleError) {
-                        if (singleError.code !== '23505') { // Not a duplicate
-                            errors.push(`Failed to save ${leadData.first_name} ${leadData.last_name}: ${singleError.message}`);
-                        }
-                    } else if (singleData) {
-                        processedCount++;
-                    }
-                }
+                console.error(`[SCRAPE-QUEUE] Insert error for ${firstName} ${lastName}: ${error.message}`);
+                errors.push(`Failed to save ${firstName} ${lastName}: ${error.message}`);
             } else if (data) {
-                processedCount += data.length;
+                processedCount++;
             }
         }
 
-        return { processedCount, errors };
+        console.log(`[SCRAPE-QUEUE] Saved ${processedCount} leads (${duplicateCount} duplicates tracked)`);
+        return { processedCount, duplicateCount, errors };
     }
 
     /**

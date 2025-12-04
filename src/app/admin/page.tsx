@@ -20,8 +20,19 @@ interface DailyUserUsage {
     creditsUsed: number;
 }
 
+interface KeyStat {
+    name: string;
+    windowCount: number;
+    windowRemaining: number;
+    dailyCount: number;
+    dailyRemaining: number;
+    inUse: boolean;
+}
+
 interface AdminStats {
     totalLeads: number;
+    pendingOrders: number;
+    formsReviewed: number;
     dailyUsage: {
         creditsUsed: number;
         creditsRemaining: number;
@@ -43,6 +54,17 @@ interface AdminStats {
             delayBetweenRequestsMs: number;
             maxEmailsPerSecond: number;
         };
+    };
+    apiKeys: {
+        count: number;
+        stats: KeyStat[];
+        capacity: {
+            keysCount: number;
+            requestsPerMinute: number;
+            requestsPerHour: number;
+            requestsPerDay: number;
+        };
+        hasMultipleKeys: boolean;
     };
     timestamp: string;
 }
@@ -209,30 +231,36 @@ export default function AdminDashboardPage() {
                         </div>
                     </div>
 
-                    <div className="bg-white rounded-xl border border-gray-200 p-6">
+                    {/* Pending Orders (replaced Total Credits) */}
+                    <Link href="/admin/credit-orders" className="bg-white rounded-xl border border-gray-200 p-6 hover:border-amber-300 hover:shadow-md transition-all">
                         <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-lg bg-emerald-100 flex items-center justify-center">
-                                <svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            <div className="w-12 h-12 rounded-lg bg-amber-100 flex items-center justify-center">
+                                <svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                                 </svg>
                             </div>
                             <div>
-                                <p className="text-sm text-gray-500">Total Credits</p>
-                                <p className="text-2xl font-bold text-gray-900">{stats.totalCredits.toLocaleString()}</p>
+                                <p className="text-sm text-gray-500">Pending Orders</p>
+                                <p className="text-2xl font-bold text-gray-900">
+                                    {statsLoading ? '...' : (adminStats?.pendingOrders || 0)}
+                                </p>
                             </div>
                         </div>
-                    </div>
+                    </Link>
 
+                    {/* Forms Reviewed (replaced Platform Value) */}
                     <div className="bg-white rounded-xl border border-gray-200 p-6">
                         <div className="flex items-center gap-4">
                             <div className="w-12 h-12 rounded-lg bg-purple-100 flex items-center justify-center">
                                 <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                                 </svg>
                             </div>
                             <div>
-                                <p className="text-sm text-gray-500">Platform Value</p>
-                                <p className="text-2xl font-bold text-gray-900">${(stats.totalCredits / 1000).toFixed(2)}</p>
+                                <p className="text-sm text-gray-500">Forms Reviewed</p>
+                                <p className="text-2xl font-bold text-gray-900">
+                                    {statsLoading ? '...' : (adminStats?.formsReviewed || 0)}
+                                </p>
                             </div>
                         </div>
                     </div>
@@ -253,7 +281,7 @@ export default function AdminDashboardPage() {
                 </div>
 
                 {/* Invite Management Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                     <Link href="/admin/access-requests" className="bg-white rounded-xl border border-gray-200 p-6 hover:border-amber-300 hover:shadow-md transition-all">
                         <div className="flex items-center gap-4">
                             <div className="w-12 h-12 rounded-lg bg-amber-100 flex items-center justify-center">
@@ -282,7 +310,90 @@ export default function AdminDashboardPage() {
                             </div>
                         </div>
                     </Link>
+
+                    <Link href="/admin/credit-orders" className="bg-white rounded-xl border border-gray-200 p-6 hover:border-emerald-300 hover:shadow-md transition-all">
+                        <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-lg bg-emerald-100 flex items-center justify-center">
+                                <svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                            </div>
+                            <div>
+                                <p className="text-lg font-semibold text-gray-900">Credit Orders</p>
+                                <p className="text-sm text-gray-500">Review and approve credit purchase requests</p>
+                            </div>
+                        </div>
+                    </Link>
                 </div>
+
+                {/* API Keys & Processing Capacity */}
+                {adminStats?.apiKeys && (
+                    <div className="bg-white rounded-xl border border-gray-200 p-6 mb-8">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-lg font-semibold text-gray-900">Mail Key Usage & Processing Capacity</h3>
+                            {adminStats.apiKeys.hasMultipleKeys && (
+                                <span className="px-2 py-1 text-xs font-medium bg-green-100 text-green-800 rounded-full">
+                                    {adminStats.apiKeys.count} Keys Active
+                                </span>
+                            )}
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                            <div className="bg-gray-50 rounded-lg p-4 text-center">
+                                <p className="text-3xl font-bold text-gray-900">{adminStats.apiKeys.count}</p>
+                                <p className="text-sm text-gray-500">API Keys</p>
+                            </div>
+                            <div className="bg-gray-50 rounded-lg p-4 text-center">
+                                <p className="text-3xl font-bold text-gray-900">{formatNumber(adminStats.apiKeys.capacity.requestsPerMinute)}</p>
+                                <p className="text-sm text-gray-500">Emails / Min</p>
+                            </div>
+                            <div className="bg-gray-50 rounded-lg p-4 text-center">
+                                <p className="text-3xl font-bold text-gray-900">{formatNumber(adminStats.apiKeys.capacity.requestsPerHour)}</p>
+                                <p className="text-sm text-gray-500">Emails / Hour</p>
+                            </div>
+                            <div className="bg-gray-50 rounded-lg p-4 text-center">
+                                <p className="text-3xl font-bold text-gray-900">{formatNumber(adminStats.apiKeys.capacity.requestsPerDay)}</p>
+                                <p className="text-sm text-gray-500">Daily Limit</p>
+                            </div>
+                        </div>
+
+                        {adminStats.apiKeys.stats.length > 0 && (
+                            <div className="mt-4">
+                                <p className="text-sm font-medium text-gray-700 mb-2">Per-Key Stats</p>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm">
+                                        <thead>
+                                            <tr className="text-gray-500 border-b">
+                                                <th className="text-left py-2">Key</th>
+                                                <th className="text-right py-2">Window (30s)</th>
+                                                <th className="text-right py-2">Daily Used</th>
+                                                <th className="text-right py-2">Daily Remaining</th>
+                                                <th className="text-right py-2">Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {adminStats.apiKeys.stats.map((key) => (
+                                                <tr key={key.name} className="border-b border-gray-100">
+                                                    <td className="py-2 font-medium text-gray-900">{key.name}</td>
+                                                    <td className="text-right py-2 text-gray-600">{key.windowCount} / 170</td>
+                                                    <td className="text-right py-2 text-gray-600">{formatNumber(key.dailyCount)}</td>
+                                                    <td className="text-right py-2 text-gray-600">{formatNumber(key.dailyRemaining)}</td>
+                                                    <td className="text-right py-2">
+                                                        {key.inUse ? (
+                                                            <span className="px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">Active</span>
+                                                        ) : (
+                                                            <span className="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">Idle</span>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* Daily Usage & Queue Status */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">

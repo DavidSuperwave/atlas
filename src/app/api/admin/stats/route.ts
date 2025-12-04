@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser, isUserAdmin, createServiceClient } from '@/lib/supabase-server';
 import { verificationQueue, VerificationQueue } from '@/lib/verification-queue';
+import { apiKeyPool } from '@/lib/api-key-pool';
 
 interface DailyUserUsage {
     userId: string;
@@ -36,6 +37,26 @@ export async function GET() {
 
         if (leadsError) {
             console.error('Error fetching leads count:', leadsError);
+        }
+
+        // Get pending credit orders count
+        const { count: pendingOrders, error: pendingOrdersError } = await supabase
+            .from('credit_orders')
+            .select('*', { count: 'exact', head: true })
+            .eq('status', 'pending');
+
+        if (pendingOrdersError) {
+            console.error('Error fetching pending orders:', pendingOrdersError);
+        }
+
+        // Get forms reviewed count (access_requests where status != 'pending')
+        const { count: formsReviewed, error: formsError } = await supabase
+            .from('access_requests')
+            .select('*', { count: 'exact', head: true })
+            .neq('status', 'pending');
+
+        if (formsError) {
+            console.error('Error fetching forms reviewed:', formsError);
         }
 
         // Get today's date range (UTC)
@@ -106,10 +127,15 @@ export async function GET() {
         const queueStats = verificationQueue.getQueueStats();
         const rateLimitInfo = VerificationQueue.getRateLimitInfo();
 
-        // Calculate daily limit info
-        const dailyLimit = rateLimitInfo.dailyLimit;
+        // Get mail key usage stats
+        const keyCount = apiKeyPool.getKeyCount();
+        const keyStats = apiKeyPool.getStats();
+        const totalCapacity = apiKeyPool.getTotalCapacity();
+
+        // Calculate daily limit info based on number of keys
+        const dailyLimit = totalCapacity.requestsPerDay;
         const dailyCreditsRemaining = Math.max(0, dailyLimit - dailyCreditsUsed);
-        const dailyUsagePercentage = (dailyCreditsUsed / dailyLimit) * 100;
+        const dailyUsagePercentage = dailyLimit > 0 ? (dailyCreditsUsed / dailyLimit) * 100 : 0;
 
         // Determine if approaching limits
         const isApproachingDailyLimit = dailyUsagePercentage >= 80;
@@ -117,6 +143,8 @@ export async function GET() {
 
         return NextResponse.json({
             totalLeads: totalLeads || 0,
+            pendingOrders: pendingOrders || 0,
+            formsReviewed: formsReviewed || 0,
             dailyUsage: {
                 creditsUsed: dailyCreditsUsed,
                 creditsRemaining: dailyCreditsRemaining,
@@ -130,6 +158,12 @@ export async function GET() {
                 ...queueStats,
                 rateLimit: rateLimitInfo
             },
+            apiKeys: {
+                count: keyCount,
+                stats: keyStats,
+                capacity: totalCapacity,
+                hasMultipleKeys: keyCount > 1,
+            },
             timestamp: new Date().toISOString()
         });
     } catch (error) {
@@ -140,5 +174,3 @@ export async function GET() {
         );
     }
 }
-
-

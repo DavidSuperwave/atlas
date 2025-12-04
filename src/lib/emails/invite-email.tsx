@@ -11,70 +11,112 @@ export function generateInviteEmailHtml({ inviteUrl, expiresAt }: InviteEmailPro
         day: 'numeric',
     });
 
-    return `
-<!DOCTYPE html>
-<html>
+    return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>You're Invited</title>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>You're Invited</title>
 </head>
-<body style="margin: 0; padding: 0; background-color: #000000; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="min-height: 100vh;">
-        <tr>
-            <td align="center" style="padding: 40px 20px;">
-                <table role="presentation" width="100%" style="max-width: 600px; background-color: #0a0a0a; border-radius: 16px; border: 1px solid #222;">
-                    <tr>
-                        <td style="padding: 48px 40px;">
-                            <!-- Logo/Icon -->
-                            <div style="text-align: center; margin-bottom: 32px;">
-                                <div style="display: inline-block; width: 64px; height: 64px; background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); border-radius: 16px;">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="padding: 16px;">
-                                        <circle cx="12" cy="12" r="10"/>
-                                        <path d="M2 12h20"/>
-                                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-                                    </svg>
-                                </div>
-                            </div>
-                            
-                            <!-- Heading -->
-                            <h1 style="color: #ffffff; font-size: 28px; font-weight: 700; text-align: center; margin: 0 0 16px 0; letter-spacing: -0.5px;">
-                                You're Invited
-                            </h1>
-                            
-                            <!-- Subheading -->
-                            <p style="color: #888888; font-size: 16px; line-height: 24px; text-align: center; margin: 0 0 32px 0;">
-                                You've been invited to join our private market intelligence platform. Click the button below to create your account.
-                            </p>
-                            
-                            <!-- CTA Button -->
-                            <div style="text-align: center; margin-bottom: 32px;">
-                                <a href="${inviteUrl}" style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); color: #ffffff; font-size: 16px; font-weight: 600; text-decoration: none; padding: 16px 48px; border-radius: 12px; letter-spacing: 0.5px;">
-                                    Accept Invitation
-                                </a>
-                            </div>
-                            
-                            <!-- Expiry Notice -->
-                            <p style="color: #666666; font-size: 14px; text-align: center; margin: 0 0 24px 0;">
-                                This invitation expires on <strong style="color: #888888;">${formattedExpiry}</strong>
-                            </p>
-                            
-                            <!-- Divider -->
-                            <div style="border-top: 1px solid #222; margin: 24px 0;"></div>
-                            
-                            <!-- Footer -->
-                            <p style="color: #555555; font-size: 12px; text-align: center; margin: 0;">
-                                If you didn't expect this invitation, you can safely ignore this email.
-                            </p>
-                        </td>
-                    </tr>
-                </table>
-            </td>
-        </tr>
-    </table>
+<body style="margin: 0; padding: 0; background-color: #000000; font-family: Arial, Helvetica, sans-serif; -webkit-font-smoothing: antialiased;">
+<table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #000000;">
+<tr>
+<td align="center" style="padding: 40px 20px;">
+<!--[if mso]>
+<table border="0" cellpadding="0" cellspacing="0" width="600">
+<tr>
+<td>
+<![endif]-->
+<table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #111111; border-radius: 8px;">
+<tr>
+<td style="padding: 48px 40px;">
+
+<!-- Logo -->
+<table border="0" cellpadding="0" cellspacing="0" width="100%">
+<tr>
+<td align="center" style="padding-bottom: 32px;">
+<table border="0" cellpadding="0" cellspacing="0">
+<tr>
+<td align="center" valign="middle" width="64" height="64" style="background-color: #3b82f6; border-radius: 8px; font-size: 32px; color: #ffffff; font-weight: bold;">
+A
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+
+<!-- Heading -->
+<table border="0" cellpadding="0" cellspacing="0" width="100%">
+<tr>
+<td align="center" style="padding-bottom: 16px; color: #ffffff; font-size: 28px; font-weight: bold; line-height: 1.2;">
+You're Invited
+</td>
+</tr>
+</table>
+
+<!-- Subheading -->
+<table border="0" cellpadding="0" cellspacing="0" width="100%">
+<tr>
+<td align="center" style="padding-bottom: 32px; color: #888888; font-size: 16px; line-height: 24px;">
+You've been invited to join Atlas, our private market intelligence platform. Click the button below to complete your onboarding and set up your account.
+</td>
+</tr>
+</table>
+
+<!-- CTA Button -->
+<table border="0" cellpadding="0" cellspacing="0" width="100%">
+<tr>
+<td align="center" style="padding-bottom: 32px;">
+<table border="0" cellpadding="0" cellspacing="0">
+<tr>
+<td align="center" bgcolor="#3b82f6" style="border-radius: 8px;">
+<a href="${inviteUrl}" target="_blank" style="display: inline-block; padding: 16px 48px; font-size: 16px; font-weight: 600; color: #ffffff; text-decoration: none;">Complete Onboarding</a>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+
+<!-- Expiry Notice -->
+<table border="0" cellpadding="0" cellspacing="0" width="100%">
+<tr>
+<td align="center" style="padding-bottom: 24px; color: #666666; font-size: 14px;">
+This invitation expires on <span style="color: #888888; font-weight: bold;">${formattedExpiry}</span>
+</td>
+</tr>
+</table>
+
+<!-- Divider -->
+<table border="0" cellpadding="0" cellspacing="0" width="100%">
+<tr>
+<td style="padding: 24px 0; border-top: 1px solid #333333;"></td>
+</tr>
+</table>
+
+<!-- Footer -->
+<table border="0" cellpadding="0" cellspacing="0" width="100%">
+<tr>
+<td align="center" style="color: #555555; font-size: 12px;">
+If you didn't expect this invitation, you can safely ignore this email.
+</td>
+</tr>
+</table>
+
+</td>
+</tr>
+</table>
+<!--[if mso]>
+</td>
+</tr>
+</table>
+<![endif]-->
+</td>
+</tr>
+</table>
 </body>
-</html>
-    `.trim();
+</html>`;
 }
 
 export function generateInviteEmailText({ inviteUrl, expiresAt }: InviteEmailProps): string {
@@ -86,11 +128,11 @@ export function generateInviteEmailText({ inviteUrl, expiresAt }: InviteEmailPro
     });
 
     return `
-You're Invited!
+You're Invited to Atlas!
 
-You've been invited to join our private market intelligence platform.
+You've been invited to join Atlas, our private market intelligence platform.
 
-Click the link below to create your account:
+Click the link below to complete your onboarding and set up your account:
 ${inviteUrl}
 
 This invitation expires on ${formattedExpiry}.

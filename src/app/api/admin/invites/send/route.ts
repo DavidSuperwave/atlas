@@ -96,14 +96,29 @@ export async function POST(request: Request) {
                     invite_id: invite.id,
                 })
                 .eq('id', accessRequestId);
+        } else {
+            // Create an access request for direct invites (so it shows in admin dashboard)
+            await supabase
+                .from('access_requests')
+                .insert({
+                    name: 'Direct Invite',
+                    email: email.toLowerCase(),
+                    intent: 'Direct invite by admin',
+                    status: 'approved',
+                    reviewed_by: user.id,
+                    reviewed_at: new Date().toISOString(),
+                    invite_id: invite.id,
+                });
         }
 
-        // Generate invite URL
+        // Generate onboarding URL (not invite URL)
         const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 
             (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
-        const inviteUrl = `${baseUrl}/invite?token=${token}`;
+        const inviteUrl = `${baseUrl}/onboarding?token=${token}`;
 
         // Send invite email
+        let emailSent = false;
+        let emailError: Error | null = null;
         try {
             await sendEmail({
                 to: email,
@@ -111,14 +126,17 @@ export async function POST(request: Request) {
                 html: generateInviteEmailHtml({ inviteUrl, expiresAt }),
                 text: generateInviteEmailText({ inviteUrl, expiresAt }),
             });
-        } catch (emailError) {
-            console.error('Error sending invite email:', emailError);
-            // Don't fail the request if email fails - invite is still created
+            emailSent = true;
+        } catch (err) {
+            console.error('Error sending invite email:', err);
+            emailError = err instanceof Error ? err : new Error('Unknown email error');
         }
 
         return NextResponse.json({
             success: true,
-            message: 'Invite sent successfully',
+            message: emailSent ? 'Invite sent successfully' : 'Invite created but email failed to send',
+            emailSent,
+            emailError: emailError ? emailError.message : null,
             invite: {
                 id: invite.id,
                 email: invite.email,

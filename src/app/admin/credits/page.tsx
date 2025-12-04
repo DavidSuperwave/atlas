@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 
 interface User {
@@ -11,11 +11,22 @@ interface User {
     created_at: string;
 }
 
+interface LowCreditsUser {
+    id: string;
+    email: string;
+    credits_balance: number;
+    telegram_username: string | null;
+    created_at: string;
+}
+
 export default function AdminCreditsPage() {
     const [users, setUsers] = useState<User[]>([]);
+    const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
+    const [lowCreditsUsers, setLowCreditsUsers] = useState<LowCreditsUser[]>([]);
     const [loading, setLoading] = useState(true);
     const [isAdmin, setIsAdmin] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [searchQuery, setSearchQuery] = useState('');
     
     // Add credits form
     const [selectedUserId, setSelectedUserId] = useState<string>('');
@@ -24,9 +35,37 @@ export default function AdminCreditsPage() {
     const [submitting, setSubmitting] = useState(false);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+    // Low credits threshold
+    const [lowCreditsThreshold] = useState(1000);
+
     useEffect(() => {
         checkAdminAndFetchUsers();
     }, []);
+
+    // Filter users based on search query
+    useEffect(() => {
+        if (searchQuery.trim() === '') {
+            setFilteredUsers(users);
+        } else {
+            const query = searchQuery.toLowerCase();
+            setFilteredUsers(users.filter(user => 
+                user.email.toLowerCase().includes(query) || 
+                user.id.toLowerCase().includes(query)
+            ));
+        }
+    }, [searchQuery, users]);
+
+    const fetchLowCreditsUsers = useCallback(async () => {
+        try {
+            const res = await fetch(`/api/admin/users/low-credits?threshold=${lowCreditsThreshold}`);
+            if (res.ok) {
+                const data = await res.json();
+                setLowCreditsUsers(data.users || []);
+            }
+        } catch (err) {
+            console.error('Error fetching low credits users:', err);
+        }
+    }, [lowCreditsThreshold]);
 
     async function checkAdminAndFetchUsers() {
         try {
@@ -52,9 +91,13 @@ export default function AdminCreditsPage() {
             if (usersRes.ok) {
                 const data = await usersRes.json();
                 setUsers(data.users);
+                setFilteredUsers(data.users);
             } else {
                 setError('Failed to fetch users');
             }
+
+            // Fetch low credits users
+            await fetchLowCreditsUsers();
         } catch (err) {
             setError('An error occurred');
             console.error(err);
@@ -94,6 +137,8 @@ export default function AdminCreditsPage() {
                     const usersData = await usersRes.json();
                     setUsers(usersData.users);
                 }
+                // Refresh low credits users
+                await fetchLowCreditsUsers();
             } else {
                 setError(data.error || 'Failed to add credits');
             }
@@ -142,20 +187,91 @@ export default function AdminCreditsPage() {
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-6">
-            <div className="max-w-6xl mx-auto">
+            <div className="max-w-7xl mx-auto">
                 {/* Header */}
                 <div className="flex items-center justify-between mb-8">
                     <div>
-                        <Link href="/dashboard" className="text-slate-400 hover:text-white text-sm mb-2 inline-block">
-                            ← Back to Dashboard
+                        <Link href="/admin" className="text-slate-400 hover:text-white text-sm mb-2 inline-block">
+                            ← Back to Admin
                         </Link>
-                        <h1 className="text-3xl font-bold text-white">Admin: Credit Management</h1>
+                        <h1 className="text-3xl font-bold text-white">Credit Management</h1>
                         <p className="text-slate-400 mt-1">Manage user credits and view balances</p>
                     </div>
                     <div className="px-3 py-1 bg-amber-500/20 text-amber-400 rounded-full text-sm font-medium">
                         Admin
                     </div>
                 </div>
+
+                {/* Low Credits Alert */}
+                {lowCreditsUsers.length > 0 && (
+                    <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-6 mb-8">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center">
+                                <svg className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                </svg>
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-semibold text-amber-400">Low Credits Alert</h3>
+                                <p className="text-amber-300/80 text-sm">{lowCreditsUsers.length} users with less than {lowCreditsThreshold.toLocaleString()} credits</p>
+                            </div>
+                        </div>
+                        
+                        <div className="space-y-3 max-h-64 overflow-y-auto">
+                            {lowCreditsUsers.map((user) => (
+                                <div key={user.id} className="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center">
+                                            <span className="text-white text-sm font-medium">
+                                                {user.email.charAt(0).toUpperCase()}
+                                            </span>
+                                        </div>
+                                        <div>
+                                            <p className="text-white font-medium text-sm">{user.email}</p>
+                                            <div className="flex items-center gap-2 text-xs text-slate-400">
+                                                <span>{user.credits_balance.toLocaleString()} credits</span>
+                                                {user.telegram_username && (
+                                                    <>
+                                                        <span>•</span>
+                                                        <a 
+                                                            href={`https://t.me/${user.telegram_username.replace('@', '')}`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="text-blue-400 hover:text-blue-300"
+                                                        >
+                                                            @{user.telegram_username.replace('@', '')}
+                                                        </a>
+                                                    </>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {user.telegram_username && (
+                                            <a
+                                                href={`https://t.me/${user.telegram_username.replace('@', '')}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded-lg text-xs transition-colors"
+                                            >
+                                                Message on Telegram
+                                            </a>
+                                        )}
+                                        <button
+                                            onClick={() => {
+                                                setSelectedUserId(user.id);
+                                                window.scrollTo({ top: 0, behavior: 'smooth' });
+                                            }}
+                                            className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 rounded-lg text-xs transition-colors"
+                                        >
+                                            Add Credits
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     {/* Add Credits Form */}
@@ -259,18 +375,46 @@ export default function AdminCreditsPage() {
                     {/* Users List */}
                     <div className="lg:col-span-2">
                         <div className="bg-slate-800/30 rounded-xl border border-slate-700/50 overflow-hidden">
-                            <div className="p-6 border-b border-slate-700/50 flex items-center justify-between">
-                                <h2 className="text-lg font-semibold text-white">All Users</h2>
-                                <span className="text-slate-400 text-sm">{users.length} users</span>
+                            <div className="p-6 border-b border-slate-700/50">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h2 className="text-lg font-semibold text-white">All Users</h2>
+                                    <span className="text-slate-400 text-sm">{filteredUsers.length} of {users.length} users</span>
+                                </div>
+                                
+                                {/* Search Bar */}
+                                <div className="relative">
+                                    <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                    </svg>
+                                    <input
+                                        type="text"
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        placeholder="Search by email or user ID..."
+                                        className="w-full pl-10 pr-4 py-3 bg-slate-900/50 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                                    />
+                                    {searchQuery && (
+                                        <button
+                                            onClick={() => setSearchQuery('')}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                                        >
+                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                            </svg>
+                                        </button>
+                                    )}
+                                </div>
                             </div>
 
-                            {users.length === 0 ? (
+                            {filteredUsers.length === 0 ? (
                                 <div className="p-12 text-center">
-                                    <p className="text-slate-400">No users found</p>
+                                    <p className="text-slate-400">
+                                        {searchQuery ? `No users found matching "${searchQuery}"` : 'No users found'}
+                                    </p>
                                 </div>
                             ) : (
-                                <div className="divide-y divide-slate-700/50">
-                                    {users.map((user) => (
+                                <div className="divide-y divide-slate-700/50 max-h-[600px] overflow-y-auto">
+                                    {filteredUsers.map((user) => (
                                         <div key={user.id} className="p-4 flex items-center gap-4 hover:bg-slate-700/20 transition-colors">
                                             <div className="w-10 h-10 rounded-full bg-slate-700 flex items-center justify-center">
                                                 <span className="text-white font-medium">
@@ -285,13 +429,18 @@ export default function AdminCreditsPage() {
                                                             Admin
                                                         </span>
                                                     )}
+                                                    {user.credits_balance < lowCreditsThreshold && (
+                                                        <span className="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">
+                                                            Low
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <div className="text-slate-400 text-sm">
                                                     Joined {formatDate(user.created_at)}
                                                 </div>
                                             </div>
                                             <div className="text-right">
-                                                <div className="text-xl font-bold text-white">
+                                                <div className={`text-xl font-bold ${user.credits_balance < lowCreditsThreshold ? 'text-amber-400' : 'text-white'}`}>
                                                     {user.credits_balance.toLocaleString()}
                                                 </div>
                                                 <div className="text-slate-400 text-sm">
@@ -318,5 +467,3 @@ export default function AdminCreditsPage() {
         </div>
     );
 }
-
-

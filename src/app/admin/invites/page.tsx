@@ -73,7 +73,12 @@ export default function InvitesPage() {
                 return;
             }
 
-            setSendSuccess(`Invite sent to ${newEmail}`);
+            // Check if email was actually sent
+            if (data.emailSent === false) {
+                setSendError(`Invite created but email failed to send: ${data.emailError || 'Unknown error'}. User can still use the invite link.`);
+            } else {
+                setSendSuccess(`Onboarding invite sent to ${newEmail}`);
+            }
             setNewEmail('');
             fetchInvites();
         } catch (err) {

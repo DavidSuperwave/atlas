@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServiceClient, getCurrentUser, isUserAdmin } from '@/lib/supabase-server';
 import { sendEmail } from '@/lib/resend';
 import { generateInviteEmailHtml, generateInviteEmailText } from '@/lib/emails/invite-email';
+import crypto from 'crypto';
 
 export async function POST(request: Request) {
     try {
@@ -35,58 +36,109 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Invite not found' }, { status: 404 });
         }
 
-        // Check if invite was already used
+        // If invite was already used, create a new one for debugging/resending
+        let inviteToUse = invite;
+        let expiresAt = new Date(invite.expires_at);
+        
         if (invite.used_at) {
-            return NextResponse.json(
-                { error: 'This invite has already been used' },
-                { status: 400 }
-            );
+            // Create a new invite with a new token for resending
+            const newToken = crypto.randomBytes(32).toString('hex');
+            expiresAt = new Date();
+            expiresAt.setDate(expiresAt.getDate() + 7);
+
+            const { data: newInvite, error: createError } = await supabase
+                .from('invites')
+                .insert({
+                    email: invite.email.toLowerCase(),
+                    token: newToken,
+                    invited_by: invite.invited_by,
+                    expires_at: expiresAt.toISOString(),
+                })
+                .select()
+                .single();
+
+            if (createError || !newInvite) {
+                console.error('Error creating new invite:', createError);
+                return NextResponse.json(
+                    { error: 'Failed to create new invite for resending' },
+                    { status: 500 }
+                );
+            }
+
+            inviteToUse = newInvite;
+            
+            // Update the access request to link to the new invite if it exists
+            await supabase
+                .from('access_requests')
+                .update({ invite_id: newInvite.id })
+                .eq('invite_id', inviteId);
+        } else {
+            // Extend expiration to 7 days from now
+            expiresAt = new Date();
+            expiresAt.setDate(expiresAt.getDate() + 7);
+
+            // Update invite expiration
+            const { error: updateError } = await supabase
+                .from('invites')
+                .update({
+                    expires_at: expiresAt.toISOString(),
+                })
+                .eq('id', inviteId);
+
+            if (updateError) {
+                console.error('Error updating invite:', updateError);
+                return NextResponse.json({ error: 'Failed to update invite' }, { status: 500 });
+            }
         }
 
-        // Extend expiration to 7 days from now
-        const expiresAt = new Date();
-        expiresAt.setDate(expiresAt.getDate() + 7);
-
-        // Update invite expiration
-        const { error: updateError } = await supabase
-            .from('invites')
-            .update({
-                expires_at: expiresAt.toISOString(),
-            })
-            .eq('id', inviteId);
-
-        if (updateError) {
-            console.error('Error updating invite:', updateError);
-            return NextResponse.json({ error: 'Failed to update invite' }, { status: 500 });
-        }
-
-        // Generate invite URL
+        // Generate onboarding URL (not invite URL)
         const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 
             (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
-        const inviteUrl = `${baseUrl}/invite?token=${invite.token}`;
+        const inviteUrl = `${baseUrl}/onboarding?token=${inviteToUse.token}`;
 
         // Resend invite email
+        let emailSent = false;
+        let emailError: Error | null = null;
         try {
             await sendEmail({
-                to: invite.email,
-                subject: 'Reminder: You\'re Invited - Private Market Intelligence',
+                to: inviteToUse.email,
+                subject: invite.used_at 
+                    ? 'New Onboarding Link - Private Market Intelligence' 
+                    : 'Reminder: You\'re Invited - Private Market Intelligence',
                 html: generateInviteEmailHtml({ inviteUrl, expiresAt }),
                 text: generateInviteEmailText({ inviteUrl, expiresAt }),
             });
-        } catch (emailError) {
-            console.error('Error sending invite email:', emailError);
+            emailSent = true;
+        } catch (err) {
+            console.error('Error sending invite email:', err);
+            emailError = err instanceof Error ? err : new Error('Unknown email error');
+        }
+
+        if (!emailSent) {
             return NextResponse.json(
-                { error: 'Failed to send email. Invite was extended but email not sent.' },
+                { 
+                    error: 'Failed to send email',
+                    emailError: emailError?.message || 'Unknown error',
+                    invite: {
+                        id: inviteToUse.id,
+                        email: inviteToUse.email,
+                        expires_at: expiresAt.toISOString(),
+                        token: inviteToUse.token, // Include token for manual sharing if needed
+                    },
+                },
                 { status: 500 }
             );
         }
 
         return NextResponse.json({
             success: true,
-            message: 'Invite resent successfully',
+            message: invite.used_at 
+                ? 'New invite created and sent successfully' 
+                : 'Invite resent successfully',
+            emailSent: true,
             invite: {
-                id: invite.id,
-                email: invite.email,
+                id: inviteToUse.id,
+                email: inviteToUse.email,
                 expires_at: expiresAt.toISOString(),
             },
         });

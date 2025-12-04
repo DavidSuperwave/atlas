@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/components/AuthProvider';
 import { getSupabaseClient } from '@/lib/supabase-client';
 import { apiFetch } from '@/lib/api-client';
@@ -10,13 +10,24 @@ import { apiFetch } from '@/lib/api-client';
 const POLLING_INTERVAL = 3000; // 3 seconds
 const POLLING_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 
-// PlusVibe account type
-interface PlusVibeAccount {
+// Campaign platform types
+type CampaignPlatform = 'instantly' | 'smartlead' | 'plusvibe' | 'push';
+
+interface CampaignAccount {
     id: string;
+    platform: CampaignPlatform;
     name: string;
     apiKey: string;
-    workspaceId: string;
+    workspaceId?: string; // Required for PlusVibe only
 }
+
+// Platform configuration
+const PLATFORM_CONFIG: Record<CampaignPlatform, { name: string; color: string; requiresWorkspaceId: boolean }> = {
+    instantly: { name: 'Instantly', color: 'bg-blue-600 hover:bg-blue-700', requiresWorkspaceId: false },
+    smartlead: { name: 'Smartlead', color: 'bg-green-600 hover:bg-green-700', requiresWorkspaceId: false },
+    plusvibe: { name: 'PlusVibe', color: 'bg-violet-600 hover:bg-violet-700', requiresWorkspaceId: true },
+    push: { name: 'Push', color: 'bg-orange-600 hover:bg-orange-700', requiresWorkspaceId: false },
+};
 
 // Tag color palette for visual distinction
 const TAG_COLORS = [
@@ -70,14 +81,15 @@ export default function ScrapeDetailsPage() {
     const [customPermutations, setCustomPermutations] = useState<{ email: string; pattern: string }[]>([]);
     const [savingLead, setSavingLead] = useState(false);
 
-    // PlusVibe state
-    const [showPlusVibeSettings, setShowPlusVibeSettings] = useState(false);
-    const [plusVibeAccounts, setPlusVibeAccounts] = useState<PlusVibeAccount[]>([]);
+    // Campaign integration state
+    const [showCampaignSettings, setShowCampaignSettings] = useState(false);
+    const [selectedPlatform, setSelectedPlatform] = useState<CampaignPlatform>('instantly');
+    const [campaignAccounts, setCampaignAccounts] = useState<CampaignAccount[]>([]);
     const [selectedAccountId, setSelectedAccountId] = useState<string>('');
     const [campaignId, setCampaignId] = useState('');
     const [providerFilter, setProviderFilter] = useState<string>('all');
-    const [sendingToPlusVibe, setSendingToPlusVibe] = useState(false);
-    const [newAccountForm, setNewAccountForm] = useState({ name: '', apiKey: '', workspaceId: '' });
+    const [sendingToCampaign, setSendingToCampaign] = useState(false);
+    const [newAccountForm, setNewAccountForm] = useState({ name: '', apiKey: '', workspaceId: '', platform: 'instantly' as CampaignPlatform });
 
     // Polling state
     const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -89,6 +101,15 @@ export default function ScrapeDetailsPage() {
     const [campaignTagInput, setCampaignTagInput] = useState('');
     const [campaignTags, setCampaignTags] = useState<string[]>([]);
     const [savingCampaign, setSavingCampaign] = useState(false);
+
+    // Delete scrape state
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [keepLeads, setKeepLeads] = useState(false);
+    const [deleting, setDeleting] = useState(false);
+    const router = useRouter();
+
+    // URL copy state
+    const [urlCopied, setUrlCopied] = useState(false);
 
     const fetchData = useCallback(async () => {
         const supabase = getSupabaseClient();
@@ -158,18 +179,40 @@ export default function ScrapeDetailsPage() {
         }
     }, [id, user, authLoading, fetchData]);
 
-    // Load PlusVibe accounts from localStorage
+    // Load campaign accounts from localStorage (with migration from old PlusVibe format)
     useEffect(() => {
-        const stored = localStorage.getItem('plusvibe_accounts');
+        // Try loading new format first
+        const stored = localStorage.getItem('campaign_accounts');
         if (stored) {
             try {
-                const accounts = JSON.parse(stored);
-                setPlusVibeAccounts(accounts);
-                if (accounts.length > 0 && !selectedAccountId) {
-                    setSelectedAccountId(accounts[0].id);
+                const accounts: CampaignAccount[] = JSON.parse(stored);
+                setCampaignAccounts(accounts);
+                // Select first account for current platform if available
+                const platformAccounts = accounts.filter(a => a.platform === selectedPlatform);
+                if (platformAccounts.length > 0 && !selectedAccountId) {
+                    setSelectedAccountId(platformAccounts[0].id);
                 }
             } catch (e) {
-                console.error('Failed to parse PlusVibe accounts:', e);
+                console.error('Failed to parse campaign accounts:', e);
+            }
+        } else {
+            // Migrate from old PlusVibe format
+            const oldStored = localStorage.getItem('plusvibe_accounts');
+            if (oldStored) {
+                try {
+                    const oldAccounts = JSON.parse(oldStored);
+                    const migratedAccounts: CampaignAccount[] = oldAccounts.map((acc: any) => ({
+                        ...acc,
+                        platform: 'plusvibe' as CampaignPlatform,
+                    }));
+                    setCampaignAccounts(migratedAccounts);
+                    localStorage.setItem('campaign_accounts', JSON.stringify(migratedAccounts));
+                    // Clean up old storage
+                    localStorage.removeItem('plusvibe_accounts');
+                    console.log('Migrated PlusVibe accounts to new campaign accounts format');
+                } catch (e) {
+                    console.error('Failed to migrate PlusVibe accounts:', e);
+                }
             }
         }
     }, []);
@@ -448,35 +491,51 @@ export default function ScrapeDetailsPage() {
         setShowExportSettings(false);
     }
 
-    // PlusVibe account management functions
-    function savePlusVibeAccounts(accounts: PlusVibeAccount[]) {
-        localStorage.setItem('plusvibe_accounts', JSON.stringify(accounts));
-        setPlusVibeAccounts(accounts);
+    // Campaign account management functions
+    function saveCampaignAccounts(accounts: CampaignAccount[]) {
+        localStorage.setItem('campaign_accounts', JSON.stringify(accounts));
+        setCampaignAccounts(accounts);
     }
 
-    function addPlusVibeAccount() {
-        if (!newAccountForm.name || !newAccountForm.apiKey || !newAccountForm.workspaceId) {
-            alert('Please fill in all fields');
+    function addCampaignAccount() {
+        const platform = newAccountForm.platform;
+        const requiresWorkspace = PLATFORM_CONFIG[platform].requiresWorkspaceId;
+        
+        if (!newAccountForm.name || !newAccountForm.apiKey) {
+            alert('Please fill in account name and API key');
             return;
         }
-        const newAccount: PlusVibeAccount = {
+        if (requiresWorkspace && !newAccountForm.workspaceId) {
+            alert('Workspace ID is required for ' + PLATFORM_CONFIG[platform].name);
+            return;
+        }
+        
+        const newAccount: CampaignAccount = {
             id: crypto.randomUUID(),
+            platform: platform,
             name: newAccountForm.name,
             apiKey: newAccountForm.apiKey,
-            workspaceId: newAccountForm.workspaceId,
+            ...(requiresWorkspace && { workspaceId: newAccountForm.workspaceId }),
         };
-        const updated = [...plusVibeAccounts, newAccount];
-        savePlusVibeAccounts(updated);
+        const updated = [...campaignAccounts, newAccount];
+        saveCampaignAccounts(updated);
         setSelectedAccountId(newAccount.id);
-        setNewAccountForm({ name: '', apiKey: '', workspaceId: '' });
+        setSelectedPlatform(platform);
+        setNewAccountForm({ name: '', apiKey: '', workspaceId: '', platform: platform });
     }
 
-    function deletePlusVibeAccount(accountId: string) {
-        const updated = plusVibeAccounts.filter(a => a.id !== accountId);
-        savePlusVibeAccounts(updated);
+    function deleteCampaignAccount(accountId: string) {
+        const updated = campaignAccounts.filter(a => a.id !== accountId);
+        saveCampaignAccounts(updated);
         if (selectedAccountId === accountId) {
-            setSelectedAccountId(updated[0]?.id || '');
+            const platformAccounts = updated.filter(a => a.platform === selectedPlatform);
+            setSelectedAccountId(platformAccounts[0]?.id || '');
         }
+    }
+
+    // Get accounts filtered by selected platform
+    function getPlatformAccounts() {
+        return campaignAccounts.filter(a => a.platform === selectedPlatform);
     }
 
     // Get filtered valid leads count based on provider filter
@@ -488,11 +547,11 @@ export default function ScrapeDetailsPage() {
         return validLeads.filter(lead => lead.provider === providerFilter).length;
     }
 
-    // Send leads to PlusVibe - only verified emails (email_validity === 'ok')
-    async function sendToPlusVibe() {
-        const selectedAccount = plusVibeAccounts.find(a => a.id === selectedAccountId);
+    // Send leads to campaign - only verified emails (email_validity === 'ok')
+    async function sendToCampaign() {
+        const selectedAccount = campaignAccounts.find(a => a.id === selectedAccountId);
         if (!selectedAccount) {
-            alert('Please select a PlusVibe account');
+            alert(`Please select a ${PLATFORM_CONFIG[selectedPlatform].name} account`);
             return;
         }
         if (!campaignId) {
@@ -508,46 +567,57 @@ export default function ScrapeDetailsPage() {
             validLeads = validLeads.filter(lead => lead.provider === providerFilter);
         }
 
+        const platformName = PLATFORM_CONFIG[selectedPlatform].name;
         if (validLeads.length === 0) {
             const filterText = providerFilter === 'all' ? '' : ` with provider "${providerFilter}"`;
-            alert(`No verified leads${filterText} to send. Only leads with valid emails (not catchall or invalid) can be sent to PlusVibe.`);
+            alert(`No verified leads${filterText} to send. Only leads with valid emails (not catchall or invalid) can be sent to ${platformName}.`);
             return;
         }
 
-        setSendingToPlusVibe(true);
+        setSendingToCampaign(true);
         try {
-            const res = await fetch('/api/plusvibe/send-leads', {
+            // Determine API endpoint based on platform
+            const apiEndpoint = `/api/${selectedPlatform}/send-leads`;
+            
+            // Build request body based on platform
+            const requestBody: any = {
+                apiKey: selectedAccount.apiKey,
+                campaignId: campaignId,
+                leads: validLeads.map(lead => ({
+                    email: lead.email,
+                    first_name: lead.first_name,
+                    last_name: lead.last_name,
+                    company_name: lead.company_name,
+                    website: lead.website,
+                    linkedin_url: lead.linkedin_url,
+                    company_linkedin: lead.company_linkedin,
+                    phone_numbers: lead.phone_numbers,
+                })),
+            };
+            
+            // Add workspaceId for PlusVibe
+            if (selectedPlatform === 'plusvibe' && selectedAccount.workspaceId) {
+                requestBody.workspaceId = selectedAccount.workspaceId;
+            }
+
+            const res = await fetch(apiEndpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    apiKey: selectedAccount.apiKey,
-                    workspaceId: selectedAccount.workspaceId,
-                    campaignId: campaignId,
-                    leads: validLeads.map(lead => ({
-                        email: lead.email,
-                        first_name: lead.first_name,
-                        last_name: lead.last_name,
-                        company_name: lead.company_name,
-                        website: lead.website,
-                        linkedin_url: lead.linkedin_url,
-                        company_linkedin: lead.company_linkedin,
-                        phone_numbers: lead.phone_numbers,
-                    })),
-                }),
+                body: JSON.stringify(requestBody),
             });
 
             const data = await res.json();
             if (data.success) {
-                alert(`Successfully sent ${validLeads.length} leads to PlusVibe!`);
-                setShowPlusVibeSettings(false);
+                alert(`Successfully sent ${validLeads.length} leads to ${platformName}!`);
+                setShowCampaignSettings(false);
             } else {
                 alert('Failed to send leads: ' + (data.error || 'Unknown error'));
             }
         } catch (err) {
-            console.error('Error sending to PlusVibe:', err);
-            alert('Error sending leads to PlusVibe');
+            console.error(`Error sending to ${platformName}:`, err);
+            alert(`Error sending leads to ${platformName}`);
         } finally {
-            setSendingToPlusVibe(false);
+            setSendingToCampaign(false);
         }
     }
 
@@ -605,6 +675,48 @@ export default function ScrapeDetailsPage() {
             console.error(err);
         } finally {
             setSavingCampaign(false);
+        }
+    }
+
+    // Copy URL to clipboard
+    async function copyUrl() {
+        if (!scrape?.url) return;
+        try {
+            await navigator.clipboard.writeText(scrape.url);
+            setUrlCopied(true);
+            setTimeout(() => setUrlCopied(false), 2000);
+        } catch (err) {
+            console.error('Failed to copy URL:', err);
+        }
+    }
+
+    // Truncate URL for display
+    function truncateUrl(url: string, maxLength: number = 60): string {
+        if (!url || url.length <= maxLength) return url;
+        return url.substring(0, maxLength) + '...';
+    }
+
+    // Delete scrape
+    async function handleDeleteScrape() {
+        setDeleting(true);
+        try {
+            const res = await fetch(`/api/scrapes/${id}/delete`, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ keepLeads }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                router.push('/dashboard');
+            } else {
+                alert('Failed to delete: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err) {
+            console.error('Delete failed:', err);
+            alert('Error deleting scrape');
+        } finally {
+            setDeleting(false);
+            setShowDeleteConfirm(false);
         }
     }
 
@@ -695,11 +807,19 @@ export default function ScrapeDetailsPage() {
                                 Export ({validCount})
                             </button>
                             <button
-                                onClick={() => setShowPlusVibeSettings(true)}
+                                onClick={() => setShowCampaignSettings(true)}
                                 className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-lg font-medium text-sm transition-all shadow-sm hover:shadow-md"
                             >
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4 20-7z"/></svg>
-                                PlusVibe ({validCount})
+                                Send to Campaign ({validCount})
+                            </button>
+                            <button
+                                onClick={() => setShowDeleteConfirm(true)}
+                                className="flex items-center gap-2 bg-white border border-red-300 hover:bg-red-50 text-red-600 px-4 py-2 rounded-lg font-medium text-sm transition-all shadow-sm"
+                                title="Delete scrape"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                                Delete
                             </button>
                         </div>
                     </div>
@@ -741,7 +861,31 @@ export default function ScrapeDetailsPage() {
                 {scrape && (
                     <div className="bg-white p-4 rounded-lg border border-gray-200 mb-6 shadow-sm">
                         <div className="text-sm text-gray-600 min-w-0">
-                            <p className="mb-1 truncate max-w-full" title={scrape.url}><span className="font-semibold text-gray-700">URL:</span> {scrape.url}</p>
+                            <div className="mb-1 flex items-center gap-2">
+                                <span className="font-semibold text-gray-700">URL:</span>
+                                <span className="truncate" title={scrape.url}>{truncateUrl(scrape.url)}</span>
+                                <button
+                                    onClick={copyUrl}
+                                    className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all ${
+                                        urlCopied 
+                                            ? 'bg-green-100 text-green-700' 
+                                            : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                                    }`}
+                                    title="Copy full URL"
+                                >
+                                    {urlCopied ? (
+                                        <>
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                            Copied!
+                                        </>
+                                    ) : (
+                                        <>
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                                            Copy
+                                        </>
+                                    )}
+                                </button>
+                            </div>
                             <p><span className="font-semibold text-gray-700">Date:</span> {new Date(scrape.created_at).toLocaleString()}</p>
                         </div>
                     </div>
@@ -1243,37 +1387,62 @@ export default function ScrapeDetailsPage() {
                 </div>
             )}
 
-            {/* PlusVibe Settings Modal */}
-            {showPlusVibeSettings && (
+            {/* Campaign Settings Modal */}
+            {showCampaignSettings && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
                         <div className="p-6 border-b border-gray-200">
                             <div className="flex justify-between items-center">
                                 <div>
-                                    <h2 className="text-xl font-bold text-gray-900">Send to PlusVibe</h2>
+                                    <h2 className="text-xl font-bold text-gray-900">Send to Campaign</h2>
                                     <p className="text-sm text-gray-500 mt-1">Send {getFilteredValidLeadsCount()} verified leads to your campaign</p>
                                 </div>
-                                <button onClick={() => setShowPlusVibeSettings(false)} className="text-gray-400 hover:text-gray-600">
+                                <button onClick={() => setShowCampaignSettings(false)} className="text-gray-400 hover:text-gray-600">
                                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                                 </button>
                             </div>
                         </div>
 
                         <div className="p-6 space-y-6">
+                            {/* Platform Selection */}
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-2">Platform</label>
+                                <div className="grid grid-cols-4 gap-2">
+                                    {(Object.keys(PLATFORM_CONFIG) as CampaignPlatform[]).map(platform => (
+                                        <button
+                                            key={platform}
+                                            onClick={() => {
+                                                setSelectedPlatform(platform);
+                                                // Select first account for this platform if available
+                                                const platformAccounts = campaignAccounts.filter(a => a.platform === platform);
+                                                setSelectedAccountId(platformAccounts[0]?.id || '');
+                                            }}
+                                            className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                                                selectedPlatform === platform
+                                                    ? `${PLATFORM_CONFIG[platform].color} text-white`
+                                                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                                            }`}
+                                        >
+                                            {PLATFORM_CONFIG[platform].name}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
                             {/* Account Selection */}
                             <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-2">Select Account</label>
-                                {plusVibeAccounts.length === 0 ? (
-                                    <p className="text-sm text-gray-500 italic">No accounts saved. Add one below.</p>
+                                <label className="block text-sm font-semibold text-gray-700 mb-2">Select {PLATFORM_CONFIG[selectedPlatform].name} Account</label>
+                                {getPlatformAccounts().length === 0 ? (
+                                    <p className="text-sm text-gray-500 italic">No {PLATFORM_CONFIG[selectedPlatform].name} accounts saved. Add one below.</p>
                                 ) : (
                                     <select
                                         value={selectedAccountId}
                                         onChange={(e) => setSelectedAccountId(e.target.value)}
                                         className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-violet-500 outline-none"
                                     >
-                                        {plusVibeAccounts.map(account => (
+                                        {getPlatformAccounts().map(account => (
                                             <option key={account.id} value={account.id}>
-                                                {account.name} ({account.workspaceId})
+                                                {account.name} {account.workspaceId ? `(${account.workspaceId})` : ''}
                                             </option>
                                         ))}
                                     </select>
@@ -1288,7 +1457,7 @@ export default function ScrapeDetailsPage() {
                                     value={campaignId}
                                     onChange={(e) => setCampaignId(e.target.value)}
                                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-violet-500 outline-none"
-                                    placeholder="Enter your PlusVibe campaign ID"
+                                    placeholder={`Enter your ${PLATFORM_CONFIG[selectedPlatform].name} campaign ID`}
                                 />
                             </div>
 
@@ -1309,11 +1478,11 @@ export default function ScrapeDetailsPage() {
 
                             {/* Send Button */}
                             <button
-                                onClick={sendToPlusVibe}
-                                disabled={sendingToPlusVibe || !selectedAccountId || !campaignId || getFilteredValidLeadsCount() === 0}
-                                className="w-full flex items-center justify-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-4 py-3 rounded-lg font-medium text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                onClick={sendToCampaign}
+                                disabled={sendingToCampaign || !selectedAccountId || !campaignId || getFilteredValidLeadsCount() === 0}
+                                className={`w-full flex items-center justify-center gap-2 ${PLATFORM_CONFIG[selectedPlatform].color} text-white px-4 py-3 rounded-lg font-medium text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
                             >
-                                {sendingToPlusVibe ? (
+                                {sendingToCampaign ? (
                                     <>
                                         <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -1324,7 +1493,7 @@ export default function ScrapeDetailsPage() {
                                 ) : (
                                     <>
                                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4 20-7z"/></svg>
-                                        Send {getFilteredValidLeadsCount()} Leads to PlusVibe
+                                        Send {getFilteredValidLeadsCount()} Leads to {PLATFORM_CONFIG[selectedPlatform].name}
                                     </>
                                 )}
                             </button>
@@ -1340,19 +1509,19 @@ export default function ScrapeDetailsPage() {
 
                             {/* Divider */}
                             <div className="border-t border-gray-200 pt-6">
-                                <h3 className="text-sm font-semibold text-gray-700 mb-4">Manage Accounts</h3>
+                                <h3 className="text-sm font-semibold text-gray-700 mb-4">Manage {PLATFORM_CONFIG[selectedPlatform].name} Accounts</h3>
 
-                                {/* Saved Accounts List */}
-                                {plusVibeAccounts.length > 0 && (
+                                {/* Saved Accounts List for Selected Platform */}
+                                {getPlatformAccounts().length > 0 && (
                                     <div className="space-y-2 mb-4">
-                                        {plusVibeAccounts.map(account => (
+                                        {getPlatformAccounts().map(account => (
                                             <div key={account.id} className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
                                                 <div>
                                                     <p className="text-sm font-medium text-gray-900">{account.name}</p>
-                                                    <p className="text-xs text-gray-500">Workspace: {account.workspaceId}</p>
+                                                    {account.workspaceId && <p className="text-xs text-gray-500">Workspace: {account.workspaceId}</p>}
                                                 </div>
                                                 <button
-                                                    onClick={() => deletePlusVibeAccount(account.id)}
+                                                    onClick={() => deleteCampaignAccount(account.id)}
                                                     className="text-red-500 hover:text-red-700 p-1"
                                                     title="Delete account"
                                                 >
@@ -1365,30 +1534,32 @@ export default function ScrapeDetailsPage() {
 
                                 {/* Add New Account Form */}
                                 <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-                                    <p className="text-xs font-medium text-gray-600 uppercase tracking-wide">Add New Account</p>
+                                    <p className="text-xs font-medium text-gray-600 uppercase tracking-wide">Add New {PLATFORM_CONFIG[selectedPlatform].name} Account</p>
                                     <input
                                         type="text"
                                         value={newAccountForm.name}
-                                        onChange={(e) => setNewAccountForm({ ...newAccountForm, name: e.target.value })}
+                                        onChange={(e) => setNewAccountForm({ ...newAccountForm, name: e.target.value, platform: selectedPlatform })}
                                         className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-violet-500 outline-none"
                                         placeholder="Account Name (e.g., My Agency)"
                                     />
                                     <input
                                         type="text"
                                         value={newAccountForm.apiKey}
-                                        onChange={(e) => setNewAccountForm({ ...newAccountForm, apiKey: e.target.value })}
+                                        onChange={(e) => setNewAccountForm({ ...newAccountForm, apiKey: e.target.value, platform: selectedPlatform })}
                                         className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-violet-500 outline-none font-mono"
                                         placeholder="API Key"
                                     />
-                                    <input
-                                        type="text"
-                                        value={newAccountForm.workspaceId}
-                                        onChange={(e) => setNewAccountForm({ ...newAccountForm, workspaceId: e.target.value })}
-                                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-violet-500 outline-none font-mono"
-                                        placeholder="Workspace ID"
-                                    />
+                                    {PLATFORM_CONFIG[selectedPlatform].requiresWorkspaceId && (
+                                        <input
+                                            type="text"
+                                            value={newAccountForm.workspaceId}
+                                            onChange={(e) => setNewAccountForm({ ...newAccountForm, workspaceId: e.target.value, platform: selectedPlatform })}
+                                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-violet-500 outline-none font-mono"
+                                            placeholder="Workspace ID"
+                                        />
+                                    )}
                                     <button
-                                        onClick={addPlusVibeAccount}
+                                        onClick={addCampaignAccount}
                                         className="w-full flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-900 text-white px-4 py-2 rounded-lg font-medium text-sm transition-all"
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
@@ -1396,6 +1567,81 @@ export default function ScrapeDetailsPage() {
                                     </button>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Confirmation Modal */}
+            {showDeleteConfirm && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-600">
+                                    <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                                </svg>
+                            </div>
+                            <div>
+                                <h2 className="text-xl font-bold text-gray-900">Delete Scrape</h2>
+                                <p className="text-sm text-gray-500">This action cannot be undone.</p>
+                            </div>
+                        </div>
+                        
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+                            <div className="flex items-start gap-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-600 flex-shrink-0 mt-0.5">
+                                    <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>
+                                </svg>
+                                <p className="text-sm text-amber-800">
+                                    <strong>Warning:</strong> Deleting this scrape will also permanently delete all {leads.length} associated leads.
+                                </p>
+                            </div>
+                        </div>
+
+                        <label className="flex items-center gap-3 cursor-pointer mb-6 p-3 bg-gray-50 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors">
+                            <input
+                                type="checkbox"
+                                checked={keepLeads}
+                                onChange={(e) => setKeepLeads(e.target.checked)}
+                                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <div>
+                                <span className="text-sm font-medium text-gray-700">Keep leads</span>
+                                <p className="text-xs text-gray-500">Remove only the scrape record, preserve leads in your database</p>
+                            </div>
+                        </label>
+
+                        <div className="flex justify-end gap-3">
+                            <button
+                                onClick={() => {
+                                    setShowDeleteConfirm(false);
+                                    setKeepLeads(false);
+                                }}
+                                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm font-medium transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleDeleteScrape}
+                                disabled={deleting}
+                                className="px-4 py-2 bg-red-600 text-white hover:bg-red-700 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
+                            >
+                                {deleting ? (
+                                    <>
+                                        <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                        </svg>
+                                        Deleting...
+                                    </>
+                                ) : (
+                                    <>
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                                        {keepLeads ? 'Delete Scrape Only' : 'Delete Scrape & Leads'}
+                                    </>
+                                )}
+                            </button>
                         </div>
                     </div>
                 </div>

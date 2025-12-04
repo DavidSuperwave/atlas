@@ -38,13 +38,13 @@ export async function middleware(request: NextRequest) {
 
     // Public routes that don't require authentication
     // Note: /signup removed - now invite-only system
-    const publicRoutes = ['/', '/login', '/invite', '/auth/callback', '/account-disabled'];
+    const publicRoutes = ['/', '/login', '/invite', '/onboarding', '/auth/callback', '/account-disabled'];
     const isPublicRoute = publicRoutes.some(route => 
         pathname === route || pathname.startsWith(route + '/')
     );
 
     // API routes that don't require auth
-    const publicApiRoutes = ['/api/auth', '/api/access-requests'];
+    const publicApiRoutes = ['/api/auth', '/api/access-requests', '/api/onboarding'];
     const isPublicApiRoute = publicApiRoutes.some(route => pathname.startsWith(route));
 
     // Redirect /signup to landing page (invite-only system)

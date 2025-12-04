@@ -342,7 +342,7 @@ export default function DashboardPage() {
           </div>
           <p className="text-zinc-500 text-sm mt-4 flex items-center gap-2">
             <span className="bg-zinc-100 text-zinc-700 px-2 py-0.5 rounded text-xs font-medium">INFO</span>
-            A browser window will open locally. Please log in to Apollo manually if prompted.
+            Do not login to Apollo account when scraping.
           </p>
         </div>
 
