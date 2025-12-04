@@ -38,7 +38,7 @@ export async function middleware(request: NextRequest) {
 
     // Public routes that don't require authentication
     // Note: /signup removed - now invite-only system
-    const publicRoutes = ['/', '/login', '/invite', '/auth/callback'];
+    const publicRoutes = ['/', '/login', '/invite', '/auth/callback', '/account-disabled'];
     const isPublicRoute = publicRoutes.some(route => 
         pathname === route || pathname.startsWith(route + '/')
     );
@@ -67,6 +67,24 @@ export async function middleware(request: NextRequest) {
         const url = request.nextUrl.clone();
         url.pathname = '/dashboard';
         return NextResponse.redirect(url);
+    }
+
+    // Check if user account is disabled (for all protected routes)
+    if (user && !isPublicRoute && !isPublicApiRoute && !pathname.startsWith('/_next')) {
+        const { data: profile } = await supabase
+            .from('user_profiles')
+            .select('is_disabled')
+            .eq('id', user.id)
+            .single();
+
+        if (profile?.is_disabled) {
+            // Redirect disabled users to account-disabled page
+            if (pathname !== '/account-disabled') {
+                const url = request.nextUrl.clone();
+                url.pathname = '/account-disabled';
+                return NextResponse.redirect(url);
+            }
+        }
     }
 
     // Admin route protection

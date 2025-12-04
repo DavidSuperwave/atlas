@@ -24,6 +24,7 @@ export default function InvitesPage() {
     const [newEmail, setNewEmail] = useState('');
     const [sendError, setSendError] = useState('');
     const [sendSuccess, setSendSuccess] = useState('');
+    const [resendingInviteId, setResendingInviteId] = useState<string | null>(null);
 
     const fetchInvites = useCallback(async () => {
         try {
@@ -80,6 +81,39 @@ export default function InvitesPage() {
         } finally {
             setSendingInvite(false);
         }
+    }
+
+    async function handleResendInvite(inviteId: string) {
+        setSendError('');
+        setSendSuccess('');
+        setResendingInviteId(inviteId);
+
+        try {
+            const res = await fetch('/api/admin/invites/resend', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ inviteId }),
+            });
+
+            const data = await res.json();
+
+            if (!res.ok) {
+                setSendError(data.error || 'Failed to resend invite');
+                return;
+            }
+
+            setSendSuccess(`Invite resent to ${data.invite.email}`);
+            fetchInvites();
+        } catch (err) {
+            setSendError('Failed to resend invite');
+        } finally {
+            setResendingInviteId(null);
+        }
+    }
+
+    function canResend(invite: Invite): boolean {
+        // Can resend if invite is not used (pending or expired)
+        return !invite.used_at;
     }
 
     function getInviteStatus(invite: Invite): { label: string; color: string } {
@@ -242,6 +276,7 @@ export default function InvitesPage() {
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Invited By</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expires</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
@@ -265,6 +300,35 @@ export default function InvitesPage() {
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                                 {invite.used_at ? formatDate(invite.used_at) : formatDate(invite.expires_at)}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                                {canResend(invite) && (
+                                                    <button
+                                                        onClick={() => handleResendInvite(invite.id)}
+                                                        disabled={resendingInviteId === invite.id}
+                                                        className="text-blue-600 hover:text-blue-800 font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                                                    >
+                                                        {resendingInviteId === invite.id ? (
+                                                            <>
+                                                                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                                                </svg>
+                                                                Resending...
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                                                </svg>
+                                                                Resend
+                                                            </>
+                                                        )}
+                                                    </button>
+                                                )}
+                                                {!canResend(invite) && (
+                                                    <span className="text-gray-400">-</span>
+                                                )}
                                             </td>
                                         </tr>
                                     );

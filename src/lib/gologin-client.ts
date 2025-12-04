@@ -5,21 +5,32 @@
  * cloud API. GoLogin is a cloud-based anti-detect browser service.
  * 
  * PREREQUISITES:
- * 1. GoLogin account with API access
- * 2. Browser profile created with Apollo logged in
- * 3. Proxy configured in the profile (recommended: residential proxy)
+ * 1. GoLogin account with API access (Professional plan or higher)
+ * 2. Browser profile created in GoLogin dashboard
+ * 3. Apollo.io logged in manually via GoLogin browser
+ * 4. Cookies/session saved in the profile
+ * 5. Proxy configured in the profile (recommended: residential proxy)
  * 
  * ENVIRONMENT VARIABLES:
- * - GOLOGIN_API_TOKEN: API token from GoLogin dashboard
+ * - GOLOGIN_API_TOKEN: API token from GoLogin dashboard (Settings → API)
  * - GOLOGIN_PROFILE_ID: Profile ID to use for scraping
  * 
+ * IMPORTANT SETUP STEPS:
+ * 1. Create profile in GoLogin dashboard
+ * 2. Run the profile manually and log into Apollo.io
+ * 3. Close the browser (this saves cookies)
+ * 4. Use the API to automate scraping
+ * 
  * API DOCUMENTATION:
- * @see https://docs.gologin.com/
+ * @see https://gologin.com/docs/api-reference/introduction/quickstart
  * @see docs/GOLOGIN_SETUP.md for setup instructions
  */
 
 /** GoLogin API base URL */
 const GOLOGIN_API_URL = 'https://api.gologin.com';
+
+/** Debug mode for verbose API logging */
+const DEBUG_API = process.env.GOLOGIN_DEBUG === 'true';
 
 /**
  * GoLogin profile information
@@ -250,10 +261,46 @@ export class GoLoginClient {
     }
 
     /**
+     * Extract WebSocket endpoint from various response formats
+     * GoLogin API may return the endpoint in different structures
+     */
+    private extractWsEndpoint(data: any): string | null {
+        // Direct properties (most common)
+        if (data.wsEndpoint) return data.wsEndpoint;
+        if (data.ws) return data.ws;
+        if (data.wsUrl) return data.wsUrl;
+        if (data.browserWSEndpoint) return data.browserWSEndpoint;
+        
+        // Nested in 'browser' object
+        if (data.browser?.wsEndpoint) return data.browser.wsEndpoint;
+        if (data.browser?.ws) return data.browser.ws;
+        
+        // Nested in 'data' object
+        if (data.data?.wsEndpoint) return data.data.wsEndpoint;
+        if (data.data?.ws) return data.data.ws;
+        
+        // Check for port-based WebSocket URL construction
+        if (data.port && data.host) {
+            return `ws://${data.host}:${data.port}/devtools/browser`;
+        }
+        if (data.remoteDebuggingPort) {
+            const host = data.host || data.remoteDebuggingAddress || 'localhost';
+            return `ws://${host}:${data.remoteDebuggingPort}/devtools/browser`;
+        }
+        
+        return null;
+    }
+
+    /**
      * Start a browser profile
      * 
      * This launches the browser profile via GoLogin cloud and returns
      * the WebSocket endpoint for Puppeteer connection.
+     * 
+     * IMPORTANT: Before using this method, ensure:
+     * 1. The profile exists in your GoLogin account
+     * 2. You have manually logged into Apollo using the GoLogin browser
+     * 3. The session/cookies are saved in the profile
      * 
      * @param profileId - Profile ID to start (uses default if not provided)
      * @returns Start response with WebSocket endpoint
@@ -264,14 +311,14 @@ export class GoLoginClient {
             return {
                 success: false,
                 wsEndpoint: '',
-                error: 'Profile ID is required. Set GOLOGIN_PROFILE_ID environment variable.'
+                error: 'Profile ID is required. Set GOLOGIN_PROFILE_ID environment variable or pass profileId parameter.'
             };
         }
 
         // Check if already running
         const existing = this.runningProfiles.get(id);
         if (existing) {
-            console.log(`[GOLOGIN-CLIENT] Profile ${id} already running`);
+            console.log(`[GOLOGIN-CLIENT] Profile ${id} already running, reusing cached endpoint`);
             return {
                 success: true,
                 wsEndpoint: existing.wsEndpoint
@@ -279,80 +326,177 @@ export class GoLoginClient {
         }
 
         try {
+            console.log(`[GOLOGIN-CLIENT] ========================================`);
             console.log(`[GOLOGIN-CLIENT] Starting profile: ${id}`);
+            console.log(`[GOLOGIN-CLIENT] API URL: ${GOLOGIN_API_URL}`);
+            console.log(`[GOLOGIN-CLIENT] Token configured: ${this.apiToken ? 'Yes (length: ' + this.apiToken.length + ')' : 'No'}`);
             
-            // Verify the profile exists by checking listProfiles() results
-            // This is more reliable than getProfile() which may return 404 for some profile types
+            // Step 1: Verify the profile exists
+            console.log(`[GOLOGIN-CLIENT] Step 1: Verifying profile exists...`);
             const allProfiles = await this.listProfiles();
+            
+            if (!allProfiles.success) {
+                return {
+                    success: false,
+                    wsEndpoint: '',
+                    error: 'Failed to list profiles. Check your API token is valid and your GoLogin subscription is active.'
+                };
+            }
+            
             const foundProfile = allProfiles.profiles.find(p => p.id === id);
             
             if (!foundProfile) {
-                // Profile not found in list - show available profile IDs for debugging
                 const availableIds = allProfiles.profiles.map(p => p.id);
                 const availableNames = allProfiles.profiles.map(p => `${p.name} (${p.id})`);
                 
                 console.error(`[GOLOGIN-CLIENT] Profile ${id} not found in account!`);
                 console.error(`[GOLOGIN-CLIENT] Total profiles found: ${allProfiles.profiles.length}`);
-                console.error(`[GOLOGIN-CLIENT] Available profile IDs: ${availableIds.join(', ')}`);
-                console.error(`[GOLOGIN-CLIENT] Available profiles: ${availableNames.join(', ')}`);
+                if (allProfiles.profiles.length > 0) {
+                    console.error(`[GOLOGIN-CLIENT] Available profiles:`);
+                    availableNames.forEach(name => console.error(`  - ${name}`));
+                }
+                
+                const suggestion = allProfiles.profiles.length > 0 
+                    ? `Available profile IDs: ${availableIds.join(', ')}`
+                    : 'No profiles found. Create a profile in GoLogin dashboard first.';
                 
                 return {
                     success: false,
                     wsEndpoint: '',
-                    error: `Profile ${id} not found in your GoLogin account. Found ${allProfiles.profiles.length} profiles with IDs: ${availableIds.join(', ')}. Please use one of these profile IDs.`
+                    error: `Profile "${id}" not found in your GoLogin account. ${suggestion}`
                 };
             }
             
-            console.log(`[GOLOGIN-CLIENT] Profile found: ${foundProfile.name} (${foundProfile.id})`);
+            console.log(`[GOLOGIN-CLIENT] ✓ Profile found: ${foundProfile.name}`);
             
-            // Start the profile via GoLogin API (Note: start endpoint does NOT use v2)
-            const response = await fetch(`${GOLOGIN_API_URL}/browser/${id}/start`, {
-                method: 'POST',
-                headers: this.getHeaders(),
-                body: JSON.stringify({
-                    // Request remote browser (cloud-based)
-                    isRemote: true,
-                    // Sync settings
-                    sync: true
-                })
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`HTTP error ${response.status}: ${errorText}`);
+            // Step 2: Try to start the profile with different parameter combinations
+            console.log(`[GOLOGIN-CLIENT] Step 2: Starting browser profile...`);
+            
+            // Try multiple request formats - GoLogin API might expect different parameters
+            const startStrategies = [
+                // Strategy 1: No body (simple POST)
+                { body: undefined, description: 'no body' },
+                // Strategy 2: isRemote only
+                { body: JSON.stringify({ isRemote: true }), description: 'isRemote: true' },
+                // Strategy 3: isRemote with sync (current approach)
+                { body: JSON.stringify({ isRemote: true, sync: true }), description: 'isRemote + sync' },
+                // Strategy 4: isCloud format (alternative naming)
+                { body: JSON.stringify({ isCloud: true }), description: 'isCloud: true' },
+            ];
+            
+            let lastError = '';
+            let responseData: any = null;
+            
+            for (const strategy of startStrategies) {
+                try {
+                    console.log(`[GOLOGIN-CLIENT] Trying start with ${strategy.description}...`);
+                    
+                    const startUrl = `${GOLOGIN_API_URL}/browser/${id}/start`;
+                    if (DEBUG_API) {
+                        console.log(`[GOLOGIN-CLIENT] POST ${startUrl}`);
+                        console.log(`[GOLOGIN-CLIENT] Body: ${strategy.body || '(empty)'}`);
+                    }
+                    
+                    const fetchOptions: RequestInit = {
+                        method: 'POST',
+                        headers: this.getHeaders(),
+                    };
+                    
+                    if (strategy.body) {
+                        fetchOptions.body = strategy.body;
+                    }
+                    
+                    const response = await fetch(startUrl, fetchOptions);
+                    const responseText = await response.text();
+                    
+                    if (DEBUG_API) {
+                        console.log(`[GOLOGIN-CLIENT] Response status: ${response.status}`);
+                        console.log(`[GOLOGIN-CLIENT] Response body: ${responseText.substring(0, 500)}`);
+                    }
+                    
+                    if (!response.ok) {
+                        lastError = `HTTP ${response.status}: ${responseText.substring(0, 200)}`;
+                        console.log(`[GOLOGIN-CLIENT] Strategy "${strategy.description}" failed: ${lastError}`);
+                        continue;
+                    }
+                    
+                    // Parse response
+                    try {
+                        responseData = JSON.parse(responseText);
+                        console.log(`[GOLOGIN-CLIENT] ✓ Start request succeeded with "${strategy.description}"`);
+                        if (DEBUG_API) {
+                            console.log(`[GOLOGIN-CLIENT] Response data:`, JSON.stringify(responseData, null, 2));
+                        }
+                        break;
+                    } catch (parseError) {
+                        lastError = `Invalid JSON response: ${responseText.substring(0, 100)}`;
+                        console.log(`[GOLOGIN-CLIENT] Strategy "${strategy.description}" returned invalid JSON`);
+                        continue;
+                    }
+                } catch (fetchError) {
+                    lastError = fetchError instanceof Error ? fetchError.message : 'Network error';
+                    console.log(`[GOLOGIN-CLIENT] Strategy "${strategy.description}" network error: ${lastError}`);
+                    continue;
+                }
             }
-
-            const data = await response.json();
             
-            // GoLogin returns wsEndpoint directly for remote browsers
-            const wsEndpoint = data.wsEndpoint || data.ws || '';
+            if (!responseData) {
+                return {
+                    success: false,
+                    wsEndpoint: '',
+                    error: `Failed to start profile after trying all strategies. Last error: ${lastError}. ` +
+                           'Ensure your GoLogin subscription includes API access and the profile is not already running elsewhere.'
+                };
+            }
+            
+            // Step 3: Extract WebSocket endpoint from response
+            console.log(`[GOLOGIN-CLIENT] Step 3: Extracting WebSocket endpoint...`);
+            let wsEndpoint = this.extractWsEndpoint(responseData);
             
             if (!wsEndpoint) {
-                // Try alternative: Get remote debugging URL
-                const statusResponse = await fetch(`${GOLOGIN_API_URL}/browser/${id}/status`, {
-                    method: 'GET',
-                    headers: this.getHeaders()
-                });
+                console.log(`[GOLOGIN-CLIENT] WebSocket endpoint not in start response, checking status...`);
                 
-                if (statusResponse.ok) {
-                    const statusData = await statusResponse.json();
-                    if (statusData.wsEndpoint) {
-                        this.runningProfiles.set(id, { wsEndpoint: statusData.wsEndpoint });
-                        console.log(`[GOLOGIN-CLIENT] Profile started successfully`);
-                        console.log(`[GOLOGIN-CLIENT] WebSocket endpoint: ${statusData.wsEndpoint}`);
-                        return {
-                            success: true,
-                            wsEndpoint: statusData.wsEndpoint
-                        };
+                // Wait a moment for the browser to fully start
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // Try to get WebSocket endpoint from status endpoint
+                try {
+                    const statusResponse = await fetch(`${GOLOGIN_API_URL}/browser/${id}/status`, {
+                        method: 'GET',
+                        headers: this.getHeaders()
+                    });
+                    
+                    if (statusResponse.ok) {
+                        const statusData = await statusResponse.json();
+                        if (DEBUG_API) {
+                            console.log(`[GOLOGIN-CLIENT] Status response:`, JSON.stringify(statusData, null, 2));
+                        }
+                        wsEndpoint = this.extractWsEndpoint(statusData);
                     }
+                } catch (statusError) {
+                    console.log(`[GOLOGIN-CLIENT] Could not get status: ${statusError}`);
                 }
+            }
+            
+            if (!wsEndpoint) {
+                console.error(`[GOLOGIN-CLIENT] Failed to get WebSocket endpoint`);
+                console.error(`[GOLOGIN-CLIENT] Start response was:`, JSON.stringify(responseData, null, 2));
                 
-                throw new Error('Failed to get WebSocket endpoint from GoLogin');
+                return {
+                    success: false,
+                    wsEndpoint: '',
+                    error: 'Profile started but no WebSocket endpoint returned. ' +
+                           'The GoLogin API response format may have changed. ' +
+                           'Response keys: ' + Object.keys(responseData).join(', ') + '. ' +
+                           'Please check GoLogin documentation or contact support.'
+                };
             }
 
+            // Success!
             this.runningProfiles.set(id, { wsEndpoint });
-            console.log(`[GOLOGIN-CLIENT] Profile started successfully`);
-            console.log(`[GOLOGIN-CLIENT] WebSocket endpoint: ${wsEndpoint}`);
+            console.log(`[GOLOGIN-CLIENT] ✓ Profile started successfully!`);
+            console.log(`[GOLOGIN-CLIENT] ✓ WebSocket endpoint: ${wsEndpoint}`);
+            console.log(`[GOLOGIN-CLIENT] ========================================`);
 
             return {
                 success: true,
@@ -360,11 +504,27 @@ export class GoLoginClient {
             };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            console.error(`[GOLOGIN-CLIENT] Error starting profile ${id}:`, errorMessage);
+            console.error(`[GOLOGIN-CLIENT] ========================================`);
+            console.error(`[GOLOGIN-CLIENT] ERROR starting profile ${id}:`);
+            console.error(`[GOLOGIN-CLIENT] ${errorMessage}`);
+            console.error(`[GOLOGIN-CLIENT] ========================================`);
+            
+            // Provide helpful suggestions based on error type
+            let suggestion = '';
+            if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
+                suggestion = ' Your API token may be invalid or expired. Get a new token from GoLogin Settings → API.';
+            } else if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
+                suggestion = ' Your GoLogin plan may not include API access. Upgrade to Professional or higher.';
+            } else if (errorMessage.includes('404')) {
+                suggestion = ' Profile not found. Verify the profile ID is correct.';
+            } else if (errorMessage.includes('429')) {
+                suggestion = ' Rate limited. Wait a moment and try again.';
+            }
+            
             return {
                 success: false,
                 wsEndpoint: '',
-                error: errorMessage
+                error: errorMessage + suggestion
             };
         }
     }
@@ -567,6 +727,178 @@ export class GoLoginClient {
      */
     isConfigured(): boolean {
         return !!this.apiToken && !!this.profileId;
+    }
+
+    /**
+     * Check if only API token is configured (profile ID may come from database)
+     */
+    hasApiToken(): boolean {
+        return !!this.apiToken;
+    }
+
+    /**
+     * Validate the current configuration
+     * 
+     * Performs comprehensive checks to ensure GoLogin is ready for use.
+     * Call this before attempting to scrape to get clear feedback on setup issues.
+     * 
+     * @returns Validation result with detailed status and suggestions
+     */
+    async validateConfiguration(): Promise<{
+        valid: boolean;
+        apiTokenValid: boolean;
+        profileConfigured: boolean;
+        profileExists: boolean;
+        canListProfiles: boolean;
+        errors: string[];
+        warnings: string[];
+        suggestions: string[];
+        profileInfo?: {
+            id: string;
+            name: string;
+            hasProxy: boolean;
+        };
+    }> {
+        const errors: string[] = [];
+        const warnings: string[] = [];
+        const suggestions: string[] = [];
+        
+        let apiTokenValid = false;
+        let canListProfiles = false;
+        let profileExists = false;
+        let profileInfo: any = undefined;
+        
+        // Check 1: API token configured
+        if (!this.apiToken) {
+            errors.push('GOLOGIN_API_TOKEN environment variable is not set');
+            suggestions.push('Get your API token from GoLogin dashboard: Settings → API');
+        } else {
+            // Check 2: API token is valid (can we reach the API?)
+            try {
+                const response = await fetch(`${GOLOGIN_API_URL}/browser/v2`, {
+                    method: 'GET',
+                    headers: this.getHeaders(),
+                    signal: AbortSignal.timeout(10000)
+                });
+                
+                if (response.ok) {
+                    apiTokenValid = true;
+                    canListProfiles = true;
+                } else if (response.status === 401) {
+                    errors.push('API token is invalid or expired');
+                    suggestions.push('Generate a new API token in GoLogin Settings → API');
+                } else if (response.status === 403) {
+                    errors.push('API access is forbidden - subscription may not include API access');
+                    suggestions.push('Upgrade to GoLogin Professional plan or higher for API access');
+                } else {
+                    warnings.push(`API returned unexpected status: ${response.status}`);
+                }
+            } catch (error) {
+                errors.push('Cannot connect to GoLogin API');
+                suggestions.push('Check your internet connection and try again');
+            }
+        }
+        
+        // Check 3: Profile ID configured
+        const profileConfigured = !!this.profileId;
+        if (!profileConfigured) {
+            warnings.push('GOLOGIN_PROFILE_ID environment variable is not set');
+            suggestions.push('Set GOLOGIN_PROFILE_ID or use database profile assignments');
+        }
+        
+        // Check 4: Profile exists (if we can list profiles)
+        if (canListProfiles && this.profileId) {
+            const profiles = await this.listProfiles();
+            const profile = profiles.profiles.find(p => p.id === this.profileId);
+            
+            if (profile) {
+                profileExists = true;
+                profileInfo = {
+                    id: profile.id,
+                    name: profile.name,
+                    hasProxy: !!(profile.proxy && profile.proxy.mode !== 'none')
+                };
+                
+                if (!profileInfo.hasProxy) {
+                    warnings.push('Profile has no proxy configured');
+                    suggestions.push('Configure a residential proxy in the GoLogin profile for better anti-detection');
+                }
+            } else {
+                errors.push(`Profile "${this.profileId}" not found in your account`);
+                if (profiles.profiles.length > 0) {
+                    suggestions.push(`Available profiles: ${profiles.profiles.map(p => `${p.name} (${p.id})`).join(', ')}`);
+                } else {
+                    suggestions.push('Create a profile in GoLogin dashboard and configure it with Apollo login');
+                }
+            }
+        }
+        
+        // Add general setup reminders
+        if (profileExists) {
+            suggestions.push('Remember: You must manually log into Apollo.io using the GoLogin browser before automation will work');
+            suggestions.push('After logging in, close the browser to save the session cookies');
+        }
+        
+        const valid = apiTokenValid && (profileConfigured || true) && (profileExists || !profileConfigured);
+        
+        return {
+            valid: errors.length === 0,
+            apiTokenValid,
+            profileConfigured,
+            profileExists,
+            canListProfiles,
+            errors,
+            warnings,
+            suggestions,
+            profileInfo
+        };
+    }
+
+    /**
+     * Get a diagnostic report for troubleshooting
+     * 
+     * @returns Formatted diagnostic string
+     */
+    async getDiagnosticReport(): Promise<string> {
+        const validation = await this.validateConfiguration();
+        
+        const lines: string[] = [
+            '=== GoLogin Diagnostic Report ===',
+            '',
+            `API Token: ${this.apiToken ? `Configured (${this.apiToken.length} chars)` : 'NOT SET'}`,
+            `API Token Valid: ${validation.apiTokenValid ? '✓ Yes' : '✗ No'}`,
+            `Profile ID: ${this.profileId || 'NOT SET'}`,
+            `Profile Exists: ${validation.profileExists ? '✓ Yes' : (validation.profileConfigured ? '✗ No' : 'N/A')}`,
+            '',
+        ];
+        
+        if (validation.profileInfo) {
+            lines.push(`Profile Name: ${validation.profileInfo.name}`);
+            lines.push(`Has Proxy: ${validation.profileInfo.hasProxy ? '✓ Yes' : '✗ No'}`);
+            lines.push('');
+        }
+        
+        if (validation.errors.length > 0) {
+            lines.push('ERRORS:');
+            validation.errors.forEach(e => lines.push(`  ✗ ${e}`));
+            lines.push('');
+        }
+        
+        if (validation.warnings.length > 0) {
+            lines.push('WARNINGS:');
+            validation.warnings.forEach(w => lines.push(`  ⚠ ${w}`));
+            lines.push('');
+        }
+        
+        if (validation.suggestions.length > 0) {
+            lines.push('SUGGESTIONS:');
+            validation.suggestions.forEach(s => lines.push(`  → ${s}`));
+            lines.push('');
+        }
+        
+        lines.push('=================================');
+        
+        return lines.join('\n');
     }
 }
 

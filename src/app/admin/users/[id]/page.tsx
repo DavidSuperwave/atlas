@@ -10,6 +10,8 @@ interface UserProfile {
     email: string;
     credits_balance: number;
     is_admin: boolean;
+    is_disabled?: boolean;
+    disabled_at?: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -60,6 +62,11 @@ export default function AdminUserDetailsPage() {
     const [assigningProfile, setAssigningProfile] = useState(false);
     const [profileError, setProfileError] = useState<string | null>(null);
     const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
+
+    // Account disable/enable
+    const [disablingAccount, setDisablingAccount] = useState(false);
+    const [accountError, setAccountError] = useState<string | null>(null);
+    const [accountSuccess, setAccountSuccess] = useState<string | null>(null);
 
     useEffect(() => {
         if (!authLoading && currentUser && userId) {
@@ -225,6 +232,66 @@ export default function AdminUserDetailsPage() {
         }
     }
 
+    async function handleDisableAccount() {
+        if (!confirm('Are you sure you want to disable this account? The user will no longer be able to access the application.')) {
+            return;
+        }
+
+        setDisablingAccount(true);
+        setAccountError(null);
+        setAccountSuccess(null);
+
+        try {
+            const res = await fetch(`/api/admin/users/${userId}/disable`, {
+                method: 'POST',
+            });
+
+            const data = await res.json();
+
+            if (res.ok) {
+                setAccountSuccess('Account disabled successfully');
+                fetchUserData();
+            } else {
+                setAccountError(data.error || 'Failed to disable account');
+            }
+        } catch (err) {
+            setAccountError('An error occurred');
+            console.error(err);
+        } finally {
+            setDisablingAccount(false);
+        }
+    }
+
+    async function handleEnableAccount() {
+        if (!confirm('Are you sure you want to enable this account?')) {
+            return;
+        }
+
+        setDisablingAccount(true);
+        setAccountError(null);
+        setAccountSuccess(null);
+
+        try {
+            const res = await fetch(`/api/admin/users/${userId}/disable`, {
+                method: 'DELETE',
+            });
+
+            const data = await res.json();
+
+            if (res.ok) {
+                setAccountSuccess('Account enabled successfully');
+                fetchUserData();
+            } else {
+                setAccountError(data.error || 'Failed to enable account');
+            }
+        } catch (err) {
+            setAccountError('An error occurred');
+            console.error(err);
+        } finally {
+            setDisablingAccount(false);
+        }
+    }
+
     function formatDate(dateString: string) {
         return new Date(dateString).toLocaleDateString('en-US', {
             month: 'short',
@@ -308,11 +375,111 @@ export default function AdminUserDetailsPage() {
                             <p className="text-3xl font-bold text-gray-900">{profile.credits_balance.toLocaleString()}</p>
                             <p className="text-sm text-gray-400">≈ ${(profile.credits_balance / 1000).toFixed(2)}</p>
                         </div>
-                        <div className="bg-gray-50 rounded-lg p-4">
+                        <div className={`rounded-lg p-4 ${profile.is_disabled ? 'bg-red-50' : 'bg-gray-50'}`}>
                             <p className="text-sm text-gray-500">Account Status</p>
-                            <p className="text-xl font-semibold text-emerald-600">Active</p>
+                            {profile.is_disabled ? (
+                                <>
+                                    <p className="text-xl font-semibold text-red-600">Disabled</p>
+                                    {profile.disabled_at && (
+                                        <p className="text-sm text-red-400">
+                                            Since {formatDate(profile.disabled_at)}
+                                        </p>
+                                    )}
+                                </>
+                            ) : (
+                                <p className="text-xl font-semibold text-emerald-600">Active</p>
+                            )}
                         </div>
                     </div>
+                </div>
+
+                {/* Account Management */}
+                <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Account Management</h3>
+                    
+                    {accountError && (
+                        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm mb-4">
+                            {accountError}
+                        </div>
+                    )}
+                    
+                    {accountSuccess && (
+                        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-700 text-sm mb-4">
+                            {accountSuccess}
+                        </div>
+                    )}
+
+                    {profile.is_disabled ? (
+                        <div className="space-y-4">
+                            <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                                <p className="text-red-800 font-medium">This account is disabled</p>
+                                <p className="text-red-600 text-sm mt-1">
+                                    The user cannot access the application. Enable the account to restore access.
+                                </p>
+                            </div>
+                            <button
+                                onClick={handleEnableAccount}
+                                disabled={disablingAccount || userId === currentUser?.id}
+                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                            >
+                                {disablingAccount ? (
+                                    <>
+                                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                        </svg>
+                                        Enabling...
+                                    </>
+                                ) : (
+                                    <>
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                        Enable Account
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="space-y-4">
+                            <p className="text-gray-600 text-sm">
+                                Disabling this account will prevent the user from accessing the application. 
+                                They will see a message explaining their account is disabled when trying to log in.
+                            </p>
+                            <button
+                                onClick={handleDisableAccount}
+                                disabled={disablingAccount || userId === currentUser?.id || profile.is_admin}
+                                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+                            >
+                                {disablingAccount ? (
+                                    <>
+                                        <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                        </svg>
+                                        Disabling...
+                                    </>
+                                ) : (
+                                    <>
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                                        </svg>
+                                        Disable Account
+                                    </>
+                                )}
+                            </button>
+                            {userId === currentUser?.id && (
+                                <p className="text-amber-600 text-sm">
+                                    You cannot disable your own account.
+                                </p>
+                            )}
+                            {profile.is_admin && userId !== currentUser?.id && (
+                                <p className="text-amber-600 text-sm">
+                                    Admin accounts cannot be disabled through this interface.
+                                </p>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* Add Credits Form */}
