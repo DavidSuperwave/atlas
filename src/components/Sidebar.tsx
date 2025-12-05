@@ -78,12 +78,22 @@ export default function Sidebar() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Hide sidebar on public routes (AFTER all hooks)
-  // Only check after mount to prevent hydration mismatch
-  // Use exact match for root '/' to avoid matching all paths
-  if (mounted && PUBLIC_ROUTES.some(route => 
-    route === '/' ? pathname === '/' : pathname?.startsWith(route)
-  )) {
+  // Don't render if pathname not yet available (prevents flash on initial load)
+  if (!pathname) {
+    return null;
+  }
+
+  // Hide sidebar on public routes - check FIRST to prevent flash
+  // This ensures both server and client return null immediately for public routes
+  const isPublicRoute = PUBLIC_ROUTES.some(route => 
+    route === '/' ? pathname === '/' : pathname.startsWith(route)
+  );
+  if (isPublicRoute) {
+    return null;
+  }
+
+  // Wait for mount for other hydration-sensitive features (like localStorage state)
+  if (!mounted) {
     return null;
   }
 

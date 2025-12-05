@@ -45,13 +45,22 @@ export default function FloatingCreditBar() {
         }
     }
 
-    // Don't render until mounted (prevents hydration mismatch)
-    if (!mounted) return null;
-
-    // Hide on public routes
-    if (PUBLIC_ROUTES.some(route => pathname?.startsWith(route))) {
+    // Don't render if pathname not yet available (prevents flash on initial load)
+    if (!pathname) {
         return null;
     }
+
+    // Hide on public routes - check FIRST to prevent flash
+    // This ensures both server and client return null immediately for public routes
+    const isPublicRoute = PUBLIC_ROUTES.some(route => 
+        route === '/' ? pathname === '/' : pathname.startsWith(route)
+    );
+    if (isPublicRoute) {
+        return null;
+    }
+
+    // Don't render until mounted (prevents hydration mismatch for other state)
+    if (!mounted) return null;
 
     // Don't render if not logged in
     if (!user) return null;

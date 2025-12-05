@@ -184,8 +184,9 @@ async function detectApolloTableStructure(page: Page): Promise<void> {
  * 12: COMPANY LINKS (website domain - CRITICAL)
  */
 async function extractAllLeadsFromPage(page: Page): Promise<RawLeadData[]> {
-    return await page.evaluate(() => {
+    const result = await page.evaluate(() => {
         const leads: RawLeadData[] = [];
+        const diagnostics: string[] = [];
         
         // Get all rows from treegrid
         let rows = document.querySelectorAll('[role="treegrid"] [role="row"]');
@@ -193,7 +194,12 @@ async function extractAllLeadsFromPage(page: Page): Promise<RawLeadData[]> {
             rows = document.querySelectorAll('[role="row"]');
         }
         
-        console.log(`[EXTRACT] Found ${rows.length} rows`);
+        diagnostics.push(`Found ${rows.length} rows total`);
+        
+        // Sample first few rows for debugging
+        let rowsWithCheckbox = 0;
+        let rowsSkippedCells = 0;
+        let rowsSkippedName = 0;
         
         rows.forEach((row, rowIndex) => {
             try {
@@ -201,10 +207,28 @@ async function extractAllLeadsFromPage(page: Page): Promise<RawLeadData[]> {
                 const hasCheckbox = row.querySelector('input[type="checkbox"]');
                 if (!hasCheckbox) return;
                 
-                // Get all cells in the row
-                const cells = row.querySelectorAll('[role="cell"], [role="gridcell"]');
+                rowsWithCheckbox++;
+                
+                // Get all cells in the row - try multiple approaches
+                let cells = row.querySelectorAll(':scope > [role="cell"], :scope > [role="gridcell"]');
+                
+                // If no direct children, try without :scope
+                if (cells.length === 0) {
+                    cells = row.querySelectorAll('[role="cell"], [role="gridcell"]');
+                }
+                
+                // Log first 3 rows for debugging
+                if (rowIndex < 3) {
+                    diagnostics.push(`Row ${rowIndex}: ${cells.length} cells, checkbox: yes`);
+                    // Log first few cell contents
+                    const cellTexts = Array.from(cells).slice(0, 5).map((c, i) => 
+                        `[${i}]="${(c.textContent || '').trim().substring(0, 20)}"`
+                    );
+                    diagnostics.push(`  Cells: ${cellTexts.join(', ')}`);
+                }
+                
                 if (cells.length < 13) {
-                    console.log(`[EXTRACT] Row ${rowIndex}: Only ${cells.length} cells, skipping`);
+                    rowsSkippedCells++;
                     return;
                 }
                 
@@ -217,7 +241,7 @@ async function extractAllLeadsFromPage(page: Page): Promise<RawLeadData[]> {
                 
                 // Skip rows with "(No Name)" or empty names - can't do enrichment without name
                 if (!name || name === '(No Name)' || name.toLowerCase().includes('no name')) {
-                    console.log(`[EXTRACT] Row ${rowIndex}: Skipping - no valid name`);
+                    rowsSkippedName++;
                     return;
                 }
                 
@@ -278,9 +302,6 @@ async function extractAllLeadsFromPage(page: Page): Promise<RawLeadData[]> {
                     }
                 }
                 
-                // Log what we extracted for debugging
-                console.log(`[EXTRACT] Row ${rowIndex}: ${name} | ${title} | ${companyName} | ${website || 'NO WEBSITE'}`);
-                
                 leads.push({
                     name,
                     title,
@@ -292,13 +313,20 @@ async function extractAllLeadsFromPage(page: Page): Promise<RawLeadData[]> {
                 });
                 
             } catch (err) {
-                console.error(`[EXTRACT] Error parsing row ${rowIndex}:`, err);
+                diagnostics.push(`Row ${rowIndex} error: ${err}`);
             }
         });
         
-        console.log(`[EXTRACT] Successfully extracted ${leads.length} leads`);
-        return leads;
+        diagnostics.push(`Summary: ${rowsWithCheckbox} rows with checkbox, ${rowsSkippedCells} skipped (cells), ${rowsSkippedName} skipped (name), ${leads.length} extracted`);
+        
+        return { leads, diagnostics };
     });
+    
+    // Log diagnostics to server console
+    console.log('[GOLOGIN-SCRAPER] Extraction diagnostics:');
+    result.diagnostics.forEach(d => console.log(`[GOLOGIN-SCRAPER]   ${d}`));
+    
+    return result.leads;
 }
 
 /**
