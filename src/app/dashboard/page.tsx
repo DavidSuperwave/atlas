@@ -377,7 +377,7 @@ export default function DashboardPage() {
                   onChange={(e) => setPages(parseInt(e.target.value))}
                   className="w-full appearance-none bg-white border border-zinc-200 rounded-lg px-4 py-2.5 pr-10 focus:outline-none focus:ring-2 focus:ring-zinc-400 text-sm text-zinc-700 cursor-pointer transition-all"
                 >
-                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(num => (
+                  {[1, 2, 3, 5, 10, 15, 20, 25, 30, 40, 50].map(num => (
                     <option key={num} value={num}>{num} {num === 1 ? 'page' : 'pages'}</option>
                   ))}
                 </select>

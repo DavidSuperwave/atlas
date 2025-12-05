@@ -3,9 +3,10 @@ import { enrichLead, MailTesterResponse } from './mailtester';
 import { deductCredits, checkCredits } from './credits';
 import { apiKeyPool, ApiKeyPool } from './api-key-pool';
 
+// Use service role key to bypass RLS for server-side operations
 const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
 // Rate limit: 170 emails per 30 seconds = ~176ms per request

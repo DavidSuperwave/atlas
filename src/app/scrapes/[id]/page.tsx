@@ -63,6 +63,10 @@ export default function ScrapeDetailsPage() {
     // Export column selection
     const [showExportSettings, setShowExportSettings] = useState(false);
     const [exportColumns, setExportColumns] = useState({
+        firstName: true,
+        lastName: true,
+        middleName: false,
+        fullName: false,
         companyName: true,
         companyWebsite: true,
         linkedinUrl: true,
@@ -504,6 +508,10 @@ export default function ScrapeDetailsPage() {
 
         // Build dynamic headers based on selected columns
         const headers: string[] = [];
+        if (exportColumns.firstName) headers.push('First Name');
+        if (exportColumns.lastName) headers.push('Last Name');
+        if (exportColumns.middleName) headers.push('Middle Name');
+        if (exportColumns.fullName) headers.push('Full Name');
         if (exportColumns.companyName) headers.push('Company Name');
         if (exportColumns.companyWebsite) headers.push('Company Website');
         if (exportColumns.linkedinUrl) headers.push('LinkedIn URL');
@@ -530,6 +538,13 @@ export default function ScrapeDetailsPage() {
         filteredLeads.forEach(lead => {
             // Build row based on selected columns
             const rowData: string[] = [];
+            if (exportColumns.firstName) rowData.push(escapeCSV(lead.first_name || ''));
+            if (exportColumns.lastName) rowData.push(escapeCSV(lead.last_name || ''));
+            if (exportColumns.middleName) rowData.push(escapeCSV(lead.middle_name || ''));
+            if (exportColumns.fullName) {
+                const nameParts = [lead.first_name, lead.middle_name, lead.last_name].filter(Boolean);
+                rowData.push(escapeCSV(nameParts.join(' ')));
+            }
             if (exportColumns.companyName) rowData.push(escapeCSV(lead.company_name || ''));
             if (exportColumns.companyWebsite) rowData.push(escapeCSV(lead.website || ''));
             if (exportColumns.linkedinUrl) rowData.push(escapeCSV(lead.company_linkedin || ''));
@@ -1140,6 +1155,42 @@ export default function ScrapeDetailsPage() {
                             <div>
                                 <label className="block text-sm font-semibold text-gray-700 mb-3">Columns to Export</label>
                                 <div className="space-y-3">
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={exportColumns.firstName}
+                                            onChange={(e) => setExportColumns(prev => ({ ...prev, firstName: e.target.checked }))}
+                                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">First Name</span>
+                                    </label>
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={exportColumns.lastName}
+                                            onChange={(e) => setExportColumns(prev => ({ ...prev, lastName: e.target.checked }))}
+                                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">Last Name</span>
+                                    </label>
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={exportColumns.middleName}
+                                            onChange={(e) => setExportColumns(prev => ({ ...prev, middleName: e.target.checked }))}
+                                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">Middle Name</span>
+                                    </label>
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={exportColumns.fullName}
+                                            onChange={(e) => setExportColumns(prev => ({ ...prev, fullName: e.target.checked }))}
+                                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">Full Name</span>
+                                    </label>
                                     <label className="flex items-center gap-3 cursor-pointer">
                                         <input
                                             type="checkbox"

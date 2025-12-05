@@ -55,7 +55,7 @@ function getSupabase(): SupabaseClient {
 const POLL_INTERVAL = 3000; // 3 seconds
 
 /** Maximum time a scrape can run before being considered stuck */
-const MAX_SCRAPE_DURATION = 15 * 60 * 1000; // 15 minutes
+const MAX_SCRAPE_DURATION = 60 * 60 * 1000; // 60 minutes for up to 50 pages
 
 /** Time estimation constants (in seconds) */
 const TIME_ESTIMATES = {

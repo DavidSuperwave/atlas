@@ -14,7 +14,7 @@ import type { ScrapedLead, ScrapeError } from './scraper-types';
 
 export type { ScrapedLead, ScrapeError };
 
-const SCRAPE_TIMEOUT = 120000;
+const SCRAPE_TIMEOUT = 45 * 60 * 1000; // 45 minutes for large scrapes
 
 const humanDelay = (min: number, max: number) =>
     new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * (max - min + 1)) + min));
