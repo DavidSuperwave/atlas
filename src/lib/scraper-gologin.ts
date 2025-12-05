@@ -383,7 +383,9 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
         let browser = await getBrowserForProfile(profileResult.profileId);
         page = await browser.newPage();
         page.setDefaultTimeout(SCRAPE_TIMEOUT);
-        await page.setViewport({ width: 1366, height: 768 });
+        // Set a larger viewport to ensure table renders properly
+        await page.setViewport({ width: 1920, height: 1080 });
+        console.log('[GOLOGIN-SCRAPER] Viewport set to 1920x1080');
 
         // Robust navigation with retries
         let navigationSuccess = false;
@@ -394,7 +396,7 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
                     browser = await getBrowserForProfile(profileResult.profileId);
                     page = await browser.newPage();
                     page.setDefaultTimeout(SCRAPE_TIMEOUT);
-                    await page.setViewport({ width: 1366, height: 768 });
+                    await page.setViewport({ width: 1920, height: 1080 });
                 }
 
                 console.log(`[GOLOGIN-SCRAPER] Navigating (attempt ${attempt})...`);
@@ -413,7 +415,8 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
             }
         }
 
-        await humanDelay(5000, 7000);
+        await humanDelay(8000, 12000); // Increased wait for page to fully load
+        console.log('[GOLOGIN-SCRAPER] Initial page load complete, checking for issues...');
 
         // Check for Cloudflare
         const content = await page.content();
@@ -432,17 +435,45 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
         for (let currentPage = 1; currentPage <= pages; currentPage++) {
             console.log(`[GOLOGIN-SCRAPER] Page ${currentPage}/${pages}...`);
 
-            // Wait for table
+                // Wait for table with extended timeout and debugging
             const tableSelectors = ['div[role="treegrid"]', 'table[role="grid"]', 'table'];
             let tableFound = false;
+            
+            // Log current page state for debugging
+            const currentUrl = page.url();
+            console.log(`[GOLOGIN-SCRAPER] Current URL: ${currentUrl}`);
+            
+            // Check for common issues
+            const pageContent = await page.content();
+            if (pageContent.includes('Sign in') || pageContent.includes('Log in')) {
+                console.log('[GOLOGIN-SCRAPER] WARNING: Login page detected');
+            }
+            if (pageContent.includes('Loading') || pageContent.includes('loading')) {
+                console.log('[GOLOGIN-SCRAPER] Page still loading, waiting longer...');
+                await humanDelay(5000, 8000);
+            }
+            
             for (const sel of tableSelectors) {
                 try {
-                    await page.waitForSelector(sel, { timeout: 10000 });
+                    console.log(`[GOLOGIN-SCRAPER] Waiting for selector: ${sel}`);
+                    await page.waitForSelector(sel, { timeout: 20000 }); // Increased from 10s to 20s
                     tableFound = true;
+                    console.log(`[GOLOGIN-SCRAPER] Found table with selector: ${sel}`);
                     break;
-                } catch { continue; }
+                } catch { 
+                    console.log(`[GOLOGIN-SCRAPER] Selector not found: ${sel}`);
+                    continue; 
+                }
             }
-            if (!tableFound) throw new Error('Table not found.');
+            
+            if (!tableFound) {
+                // Take a screenshot for debugging (if possible)
+                try {
+                    const screenshot = await page.screenshot({ encoding: 'base64' });
+                    console.log(`[GOLOGIN-SCRAPER] Page screenshot (base64, first 200 chars): ${screenshot.substring(0, 200)}...`);
+                } catch {}
+                throw new Error('Table not found. Page may not have loaded correctly.');
+            }
 
             // Wait for content to render
             await page.evaluate(() => window.scrollBy(0, 300));
