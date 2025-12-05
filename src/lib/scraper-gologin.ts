@@ -1,30 +1,10 @@
 /**
  * GoLogin Scraper - Apollo scraping using GoLogin cloud anti-detect browser
  * 
- * OPTIMIZED VERSION: Uses batch page.evaluate() for fast data extraction
- * 
- * This module handles scraping Apollo.io using GoLogin browser profiles.
- * It provides enhanced anonymity and Cloudflare bypass through anti-detect
- * fingerprinting and residential proxy support.
- * 
- * MULTI-PROFILE SUPPORT:
- * - Pass userId to scrapeApollo() to use user's assigned profile
- * - Falls back to GOLOGIN_PROFILE_ID env var if no assignment
- * 
- * PREREQUISITES:
- * 1. GoLogin account with API access
- * 2. Browser profile created with Apollo logged in
- * 3. Proxy configured in the profile (recommended: residential proxy)
- * 
- * ENVIRONMENT VARIABLES:
- * - SCRAPER_MODE=gologin (to enable this scraper)
- * - GOLOGIN_API_TOKEN: API token from GoLogin dashboard
- * - GOLOGIN_PROFILE_ID: Default profile ID (optional fallback)
- * 
- * FUNCTION SIGNATURE:
- * scrapeApollo(url: string, pages?: number, userId?: string): Promise<ScrapedLead[]>
- * 
- * @see docs/GOLOGIN_SETUP.md for setup instructions
+ * EXTRACTION STRATEGY:
+ * 1. Find NAME via person link (href contains "/people/")
+ * 2. Find DOMAIN via website link (aria-label="website link")
+ * 3. Discard rows missing name OR domain
  */
 
 import { getBrowserForProfile } from './browser-manager-gologin';
@@ -32,206 +12,271 @@ import { getUserProfileId, ProfileLookupResult } from './gologin-profile-manager
 import { Page } from 'puppeteer';
 import type { ScrapedLead, ScrapeError } from './scraper-types';
 
-// Re-export types for convenience
 export type { ScrapedLead, ScrapeError };
 
-/** Timeout for scrape operations in milliseconds */
-const SCRAPE_TIMEOUT = 120000; // 2 minutes per page/action safety
+const SCRAPE_TIMEOUT = 120000;
 
-/**
- * Human-like delay between actions
- * Adds randomness to avoid detection
- */
 const humanDelay = (min: number, max: number) =>
     new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * (max - min + 1)) + min));
 
-/**
- * Interface for raw lead data extracted from browser
- */
 interface RawLeadData {
     name: string;
-    linkedinUrl: string;
     title: string;
     companyName: string;
-    companyLinkedin: string;
-    website: string;
+    domain: string;
     location: string;
     companySize: string;
     industry: string;
-    keywords: string;
+    companyLinkedin: string;
     phoneNumbers: string[];
+    apolloUrl: string;
 }
 
-/**
- * Get the profile ID to use for scraping
- * 
- * @param userId - Optional user ID to look up assigned profile
- * @returns Profile lookup result with profile ID and source
- */
+interface ExtractionDiagnostics {
+    rowsFound: number;
+    skippedNoName: number;
+    skippedNoDomain: number;
+    successfulExtractions: number;
+    sampleData: string[];
+    errors: string[];
+}
+
 async function getProfileForScrape(userId?: string): Promise<ProfileLookupResult> {
     if (userId) {
-        // Look up user's assigned profile
         const result = await getUserProfileId(userId);
-        if (result.profileId) {
-            return result;
-        }
-        // If no assignment, error will be in result
-        if (result.error) {
-            console.warn(`[GOLOGIN-SCRAPER] ${result.error}`);
-        }
+        if (result.profileId) return result;
+        if (result.error) console.warn(`[GOLOGIN-SCRAPER] ${result.error}`);
         return result;
     }
     
-    // No userId provided, use environment variable
     const envProfileId = process.env.GOLOGIN_PROFILE_ID;
     if (envProfileId) {
-        return {
-            profileId: envProfileId,
-            source: 'environment'
-        };
+        return { profileId: envProfileId, source: 'environment' };
     }
     
     return {
         profileId: '',
         source: 'none',
-        error: 'No GoLogin profile configured. Set GOLOGIN_PROFILE_ID or assign a profile to the user.'
+        error: 'No GoLogin profile configured.'
     };
 }
 
 /**
- * Extract ALL leads from the current page in a SINGLE browser call
- * This is much faster than iterating row by row with multiple round-trips
+ * Extract leads from Apollo page
  */
-async function extractAllLeadsFromPage(page: Page): Promise<RawLeadData[]> {
+async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData[]; diagnostics: ExtractionDiagnostics }> {
     return await page.evaluate(() => {
         const leads: RawLeadData[] = [];
-        
-        // Get all rows - try multiple selectors
-        let rows = document.querySelectorAll('div[role="treegrid"] div[role="row"]');
-        if (rows.length === 0) {
-            rows = document.querySelectorAll('table[role="grid"] tr');
-        }
-        if (rows.length === 0) {
-            rows = document.querySelectorAll('[data-cy="people-table-row"]');
-        }
-        
-        rows.forEach((row) => {
+        const diagnostics: ExtractionDiagnostics = {
+            rowsFound: 0,
+            skippedNoName: 0,
+            skippedNoDomain: 0,
+            successfulExtractions: 0,
+            sampleData: [],
+            errors: []
+        };
+
+        // Helper to extract domain from URL
+        function extractDomain(url: string): string {
+            if (!url) return '';
             try {
-                // Check for checkbox to ensure it's a data row (not header)
-                const hasCheckbox = row.querySelector('input[type="checkbox"]');
-                if (!hasCheckbox) return;
+                if (url.includes('://')) {
+                    const parsed = new URL(url);
+                    return parsed.hostname.replace(/^www\./, '');
+                }
+                if (url.includes('.') && !url.includes(' ')) {
+                    return url.replace(/^www\./, '').split('/')[0].trim();
+                }
+            } catch {}
+            return '';
+        }
+
+        // Find the table
+        const table = document.querySelector('div[role="treegrid"]') || 
+                      document.querySelector('table[role="grid"]') ||
+                      document.querySelector('table');
+        
+        if (!table) {
+            diagnostics.errors.push('No table found');
+            return { leads, diagnostics };
+        }
+
+        const allRows = table.querySelectorAll('[role="row"], tr');
+        diagnostics.rowsFound = allRows.length;
+
+        for (let rowIndex = 0; rowIndex < allRows.length; rowIndex++) {
+            const row = allRows[rowIndex];
+            
+            try {
+                // Skip header rows
+                if (row.querySelector('[role="columnheader"], th')) continue;
+
+                // ========================================
+                // STEP 1: Find NAME (REQUIRED)
+                // The name is a link with href containing "/people/"
+                // ========================================
+                let name = '';
+                let apolloUrl = '';
                 
-                // Get all cells
-                const cells = row.querySelectorAll('div[role="cell"], td');
-                if (cells.length < 3) return;
+                const personLink = row.querySelector('a[href*="/people/"]') as HTMLAnchorElement;
+                if (personLink) {
+                    name = personLink.textContent?.trim() || '';
+                    apolloUrl = personLink.href || '';
+                    if (apolloUrl && !apolloUrl.startsWith('http')) {
+                        apolloUrl = `https://app.apollo.io${apolloUrl}`;
+                    }
+                }
+
+                if (!name || 
+                    name.toLowerCase().includes('access') || 
+                    name.toLowerCase().includes('email') ||
+                    name.length < 2) {
+                    diagnostics.skippedNoName++;
+                    continue;
+                }
+
+                // ========================================
+                // STEP 2: Find DOMAIN (REQUIRED)
+                // Apollo's website link has aria-label="website link"
+                // The URL is in data-href or href attribute
+                // ========================================
+                let domain = '';
                 
-                // Extract person name and LinkedIn URL
-                const personLink = row.querySelector('a[href*="/people/"]') || 
-                                   row.querySelector('a[data-link-type="person"]') ||
-                                   row.querySelector('[data-cy="person-name"] a');
-                
-                if (!personLink) return;
-                
-                const name = personLink.textContent?.trim() || '';
-                if (!name) return;
-                
-                let linkedinUrl = personLink.getAttribute('href') || '';
-                if (linkedinUrl && !linkedinUrl.startsWith('http')) {
-                    linkedinUrl = `https://app.apollo.io${linkedinUrl}`;
+                // METHOD 1: Look for Apollo's website link button
+                const websiteLink = row.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
+                if (websiteLink) {
+                    const href = websiteLink.getAttribute('data-href') || websiteLink.href || '';
+                    if (href) {
+                        domain = extractDomain(href);
+                    }
                 }
                 
-                // Extract company data
-                const companyLink = row.querySelector('a[href*="/organizations/"]') ||
-                                    row.querySelector('a[href*="/accounts/"]') ||
-                                    row.querySelector('a[data-link-type="company"]') ||
-                                    row.querySelector('[data-cy="company-name"] a');
-                
-                let companyName = companyLink?.textContent?.trim() || '';
-                
-                // Fallback: get company from cell index
-                if (!companyName && cells.length >= 4) {
-                    companyName = cells[3]?.textContent?.trim() || '';
+                // METHOD 2: Look for any external link
+                if (!domain) {
+                    const allLinks = row.querySelectorAll('a[href]') as NodeListOf<HTMLAnchorElement>;
+                    for (const link of allLinks) {
+                        const href = link.getAttribute('data-href') || link.href || '';
+                        if (!href ||
+                            href.includes('apollo.io') ||
+                            href.includes('linkedin.com') ||
+                            href.includes('twitter.com') ||
+                            href.includes('facebook.com') ||
+                            href.includes('tel:') ||
+                            href.includes('mailto:')) {
+                            continue;
+                        }
+                        const extracted = extractDomain(href);
+                        if (extracted && extracted.includes('.')) {
+                            domain = extracted;
+                            break;
+                        }
+                    }
                 }
+
+                if (!domain) {
+                    diagnostics.skippedNoDomain++;
+                    continue;
+                }
+
+                // ========================================
+                // STEP 3: Extract optional fields
+                // ========================================
+                const cells = row.querySelectorAll('[role="cell"], [role="gridcell"], td');
                 
-                // Company LinkedIn
-                const companyLinkedinLink = row.querySelector('a[href*="linkedin.com/company"]');
-                const companyLinkedin = companyLinkedinLink?.getAttribute('href') || '';
-                
-                // Website - find link that's not apollo, linkedin, twitter, facebook
-                let website = '';
-                const allLinks = row.querySelectorAll('a[href^="http"]');
-                for (const link of allLinks) {
-                    const href = link.getAttribute('href') || '';
-                    if (href && 
-                        !href.includes('apollo.io') && 
-                        !href.includes('linkedin.com') && 
-                        !href.includes('twitter.com') && 
-                        !href.includes('facebook.com')) {
-                        website = href;
+                // Title - first cell that's not the name
+                let title = '';
+                for (let i = 0; i < Math.min(cells.length, 3); i++) {
+                    const text = cells[i]?.textContent?.trim() || '';
+                    if (text && text !== name && !text.toLowerCase().includes('access') && text.length > 2 && text.length < 100) {
+                        title = text;
                         break;
                     }
                 }
-                
-                // Extract title from cell index 2
-                const title = cells.length >= 3 ? (cells[2]?.textContent?.trim() || '') : '';
-                
-                // Extract location from cell index 9
-                const location = cells.length >= 10 ? (cells[9]?.textContent?.trim() || '') : '';
-                
-                // Extract company size from cell index 10
-                const companySize = cells.length >= 11 ? (cells[10]?.textContent?.trim() || '') : '';
-                
-                // Extract industry from cell index 11
-                const industry = cells.length >= 12 ? (cells[11]?.textContent?.trim() || '') : '';
-                
-                // Extract keywords from cell index 12
-                const keywords = cells.length >= 13 ? (cells[12]?.textContent?.trim() || '') : '';
-                
-                // Extract phone numbers
+
+                // Company name
+                let companyName = '';
+                const companyLink = row.querySelector('a[href*="/organization"]') || row.querySelector('a[href*="/account"]');
+                if (companyLink) {
+                    companyName = companyLink.textContent?.trim() || '';
+                }
+                if (!companyName) {
+                    for (let i = 1; i < Math.min(cells.length, 4); i++) {
+                        const text = cells[i]?.textContent?.trim() || '';
+                        if (text && text !== name && text !== title && !text.toLowerCase().includes('access') && text.length > 1) {
+                            companyName = text;
+                            break;
+                        }
+                    }
+                }
+
+                // Company LinkedIn
+                let companyLinkedin = '';
+                const linkedinLink = row.querySelector('a[href*="linkedin.com/company"]') as HTMLAnchorElement;
+                if (linkedinLink) companyLinkedin = linkedinLink.href || '';
+
+                // Location (City, State pattern)
+                let location = '';
+                for (const cell of cells) {
+                    const text = cell.textContent?.trim() || '';
+                    if (text.includes(',') && text.length < 60) {
+                        location = text;
+                        break;
+                    }
+                }
+
+                // Company size (number pattern)
+                let companySize = '';
+                for (const cell of cells) {
+                    const text = cell.textContent?.trim() || '';
+                    if (text.match(/^\d+[-–]\d+$/) || text.match(/^\d+\+$/)) {
+                        companySize = text;
+                        break;
+                    }
+                }
+
+                // Phone numbers
                 const phoneNumbers: string[] = [];
                 const telLinks = row.querySelectorAll('a[href^="tel:"]');
-                telLinks.forEach(telLink => {
-                    const phone = telLink.textContent?.trim();
-                    if (phone && phone !== 'Access Mobile') {
+                telLinks.forEach(tel => {
+                    const phone = tel.textContent?.trim();
+                    if (phone && !phone.toLowerCase().includes('access')) {
                         phoneNumbers.push(phone);
                     }
                 });
-                
+
+                // Log sample data
+                if (diagnostics.successfulExtractions < 3) {
+                    diagnostics.sampleData.push(`${name} | ${title} | ${companyName} | ${domain}`);
+                }
+
                 leads.push({
                     name,
-                    linkedinUrl,
                     title,
                     companyName,
-                    companyLinkedin,
-                    website,
+                    domain,
                     location,
                     companySize,
-                    industry,
-                    keywords,
-                    phoneNumbers
+                    industry: '',
+                    companyLinkedin,
+                    phoneNumbers,
+                    apolloUrl
                 });
-                
+
+                diagnostics.successfulExtractions++;
+
             } catch (err) {
-                // Skip this row on error
-                console.error('Error parsing row:', err);
+                diagnostics.errors.push(`Row ${rowIndex}: ${err}`);
             }
-        });
-        
-        return leads;
+        }
+
+        return { leads, diagnostics };
     });
 }
 
-/**
- * Convert raw lead data to ScrapedLead format
- */
 function convertToScrapedLead(raw: RawLeadData): ScrapedLead {
-    const nameParts = raw.name.split(' ');
+    const nameParts = raw.name.trim().split(/\s+/);
     const firstName = nameParts[0] || '';
     const lastName = nameParts.slice(1).join(' ') || '';
-    
-    const keywords = raw.keywords 
-        ? raw.keywords.split(',').map(k => k.trim()).filter(k => k)
-        : [];
     
     return {
         first_name: firstName,
@@ -242,194 +287,128 @@ function convertToScrapedLead(raw: RawLeadData): ScrapedLead {
         location: raw.location,
         company_size: raw.companySize,
         industry: raw.industry,
-        website: raw.website,
-        keywords,
+        website: raw.domain ? `https://${raw.domain}` : '',
+        keywords: [],
         email: undefined,
-        linkedin_url: raw.linkedinUrl,
+        linkedin_url: raw.apolloUrl,
         phone_numbers: raw.phoneNumbers
     };
 }
 
-/**
- * Scrape leads from Apollo.io using GoLogin
- * 
- * OPTIMIZED: Uses batch page.evaluate() for fast extraction
- * 
- * @param url - Apollo search URL to scrape
- * @param pages - Number of pages to scrape (default: 1)
- * @param userId - Optional user ID to look up assigned profile
- * @returns Promise<ScrapedLead[]> - Array of scraped leads
- */
 export async function scrapeApollo(url: string, pages: number = 1, userId?: string): Promise<ScrapedLead[]> {
-    console.log('[GOLOGIN-SCRAPER] === Starting Apollo Scrape (GoLogin Mode - OPTIMIZED) ===');
-    console.log(`[GOLOGIN-SCRAPER] Target URL: ${url}`);
-    console.log(`[GOLOGIN-SCRAPER] Pages to scrape: ${pages}`);
-    console.log(`[GOLOGIN-SCRAPER] User ID: ${userId || '(none - using default profile)'}`);
+    console.log('[GOLOGIN-SCRAPER] === Starting Apollo Scrape ===');
+    console.log(`[GOLOGIN-SCRAPER] URL: ${url}`);
+    console.log(`[GOLOGIN-SCRAPER] Pages: ${pages}`);
 
-    // Get the profile to use
     const profileResult = await getProfileForScrape(userId);
-    
     if (!profileResult.profileId) {
-        throw new Error(profileResult.error || 'No GoLogin profile available for scraping.');
+        throw new Error(profileResult.error || 'No GoLogin profile available.');
     }
     
-    console.log(`[GOLOGIN-SCRAPER] Using profile: ${profileResult.profileId} (source: ${profileResult.source}${profileResult.profileName ? `, name: ${profileResult.profileName}` : ''})`);
+    console.log(`[GOLOGIN-SCRAPER] Profile: ${profileResult.profileId}`);
 
     let page: Page | null = null;
     const allLeads: ScrapedLead[] = [];
 
     try {
-        console.log('[GOLOGIN-SCRAPER] Getting GoLogin browser connection...');
-        
-        // Get browser for the specific profile
         const browser = await getBrowserForProfile(profileResult.profileId);
-
-        console.log('[GOLOGIN-SCRAPER] Creating new page...');
         page = await browser.newPage();
         page.setDefaultTimeout(SCRAPE_TIMEOUT);
-
-        // Set a realistic viewport (GoLogin may override this with profile settings)
         await page.setViewport({ width: 1366, height: 768 });
 
-        console.log(`[GOLOGIN-SCRAPER] Navigating to: ${url}`);
-        
-        // Use 'load' instead of 'networkidle2' - Apollo keeps making requests so networkidle2 may never fire
+        console.log(`[GOLOGIN-SCRAPER] Navigating...`);
         try {
             await page.goto(url, { waitUntil: 'load', timeout: 60000 });
-        } catch (navError) {
-            // If initial navigation fails, try with domcontentloaded
-            console.log('[GOLOGIN-SCRAPER] Initial navigation slow, trying domcontentloaded...');
+        } catch {
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
         }
         
-        // Wait for page to stabilize after navigation
-        console.log('[GOLOGIN-SCRAPER] Waiting for page to stabilize...');
         await humanDelay(5000, 7000);
 
-        // Check for Cloudflare challenge
-        const pageContent = await page.content();
-        if (pageContent.includes('challenge-platform') || pageContent.includes('cf-browser-verification')) {
-            console.log('[GOLOGIN-SCRAPER] WARNING: Cloudflare challenge detected. Waiting...');
+        // Check for Cloudflare
+        const content = await page.content();
+        if (content.includes('challenge-platform') || content.includes('cf-browser-verification')) {
+            console.log('[GOLOGIN-SCRAPER] Cloudflare detected, waiting...');
             await humanDelay(5000, 10000);
-            // Re-navigate after challenge
             await page.goto(url, { waitUntil: 'load', timeout: 60000 });
             await humanDelay(5000, 7000);
         }
 
-        // Check if we're on the right page
-        const currentUrl = page.url();
-        console.log(`[GOLOGIN-SCRAPER] Current URL after navigation: ${currentUrl}`);
-        
-        if (currentUrl.includes('/login') || currentUrl.includes('/sign')) {
-            throw new Error('Not logged into Apollo. Please log in using the GoLogin browser profile.');
+        // Check login
+        if (page.url().includes('/login') || page.url().includes('/sign')) {
+            throw new Error('Not logged into Apollo.');
         }
 
         for (let currentPage = 1; currentPage <= pages; currentPage++) {
-            console.log(`[GOLOGIN-SCRAPER] Processing page ${currentPage}/${pages}...`);
+            console.log(`[GOLOGIN-SCRAPER] Page ${currentPage}/${pages}...`);
 
-            // Wait for table - try multiple selectors
-            const tableSelectors = [
-                'div[role="treegrid"]',
-                'table[role="grid"]',
-                '[data-cy="people-table"]',
-                '.zp_tZMWg'
-            ];
-            
+            // Wait for table
+            const tableSelectors = ['div[role="treegrid"]', 'table[role="grid"]', 'table'];
             let tableFound = false;
-            for (const selector of tableSelectors) {
+            for (const sel of tableSelectors) {
                 try {
-                    await page.waitForSelector(selector, { timeout: 10000 });
-                    console.log(`[GOLOGIN-SCRAPER] Table found with selector: ${selector}`);
+                    await page.waitForSelector(sel, { timeout: 10000 });
                     tableFound = true;
                     break;
-                } catch {
-                    continue;
-                }
+                } catch { continue; }
             }
-            
-            if (!tableFound) {
-                console.log('[GOLOGIN-SCRAPER] Table not found - checking page state...');
-                const currentUrl = page.url();
-                console.log(`[GOLOGIN-SCRAPER] Current URL: ${currentUrl}`);
-                
-                if (currentUrl.includes('/login') || currentUrl.includes('/sign')) {
-                    throw new Error('Not logged into Apollo. Please log in using the GoLogin browser profile.');
-                }
-                
-                throw new Error('Apollo table not found. Ensure you are logged in and on a valid search page.');
-            }
+            if (!tableFound) throw new Error('Table not found.');
 
-            // Small scroll to ensure all rows are visible
             await page.evaluate(() => window.scrollBy(0, 300));
             await humanDelay(500, 1000);
 
-            // BATCH EXTRACTION - Extract ALL leads in a single call (FAST!)
-            const startTime = Date.now();
-            const rawLeads = await extractAllLeadsFromPage(page);
-            const extractionTime = Date.now() - startTime;
+            // Extract
+            const { leads: rawLeads, diagnostics } = await extractAllLeadsFromPage(page);
             
-            console.log(`[GOLOGIN-SCRAPER] Extracted ${rawLeads.length} leads in ${extractionTime}ms`);
+            // Log results
+            console.log(`[GOLOGIN-SCRAPER] ========== RESULTS ==========`);
+            console.log(`[GOLOGIN-SCRAPER] Rows: ${diagnostics.rowsFound}`);
+            console.log(`[GOLOGIN-SCRAPER] Skipped (no name): ${diagnostics.skippedNoName}`);
+            console.log(`[GOLOGIN-SCRAPER] Skipped (no domain): ${diagnostics.skippedNoDomain}`);
+            console.log(`[GOLOGIN-SCRAPER] Extracted: ${diagnostics.successfulExtractions}`);
+            if (diagnostics.sampleData.length > 0) {
+                console.log(`[GOLOGIN-SCRAPER] Samples:`);
+                diagnostics.sampleData.forEach(s => console.log(`[GOLOGIN-SCRAPER]   ${s}`));
+            }
+            if (diagnostics.errors.length > 0) {
+                console.log(`[GOLOGIN-SCRAPER] Errors: ${diagnostics.errors.slice(0, 3).join('; ')}`);
+            }
+            console.log(`[GOLOGIN-SCRAPER] =============================`);
 
-            // Convert to ScrapedLead format
             for (const raw of rawLeads) {
                 allLeads.push(convertToScrapedLead(raw));
             }
 
-            // Pagination with delays for anti-detection (5-11 seconds as requested)
+            // Pagination
             if (currentPage < pages) {
-                // Find next button
                 const nextBtn = await page.$('button[aria-label="Next"]') ||
-                               await page.$('button[aria-label="next"]') ||
-                               await page.$('[data-cy="pagination-next"]');
-                
+                               await page.$('button[aria-label="next"]');
                 if (nextBtn) {
                     const isDisabled = await page.evaluate(el => el.hasAttribute('disabled'), nextBtn);
                     if (!isDisabled) {
-                        // Keep 5-11 second delay for pagination (anti-detection)
-                        const delay = Math.floor(Math.random() * 6000) + 5000; // 5-11s delay
-                        console.log(`[GOLOGIN-SCRAPER] Waiting ${delay}ms before next page...`);
+                        const delay = Math.floor(Math.random() * 6000) + 5000;
+                        console.log(`[GOLOGIN-SCRAPER] Waiting ${delay}ms...`);
                         await new Promise(r => setTimeout(r, delay));
-
                         await nextBtn.click();
-                        await humanDelay(3000, 5000); // Wait for page load
-                    } else {
-                        console.log('[GOLOGIN-SCRAPER] Next button is disabled, stopping pagination');
-                        break;
-                    }
-                } else {
-                    console.log('[GOLOGIN-SCRAPER] Next button not found, stopping pagination');
-                    break;
-                }
+                        await humanDelay(3000, 5000);
+                    } else break;
+                } else break;
             }
         }
 
-        console.log(`[GOLOGIN-SCRAPER] ✓ Scraped ${allLeads.length} leads total`);
+        console.log(`[GOLOGIN-SCRAPER] ✓ Total: ${allLeads.length} leads`);
         return allLeads;
 
     } catch (error) {
-        console.error('[GOLOGIN-SCRAPER] Scrape failed:', error);
+        console.error('[GOLOGIN-SCRAPER] Failed:', error);
         throw error;
     } finally {
-        // Safely close the page, handling connection closed errors
         if (page) {
-            try {
-                await page.close();
-            } catch (closeError) {
-                // Connection may already be closed - this is not a critical error
-                console.log('[GOLOGIN-SCRAPER] Page close warning (connection may have been closed):', 
-                    closeError instanceof Error ? closeError.message : 'Unknown error');
-            }
+            try { await page.close(); } catch {}
         }
     }
 }
 
-/**
- * Get the profile result that would be used for a scrape
- * Useful for UI to show which profile will be used
- * 
- * @param userId - Optional user ID
- * @returns Profile lookup result
- */
 export async function getScraperProfileInfo(userId?: string): Promise<ProfileLookupResult> {
     return getProfileForScrape(userId);
 }
