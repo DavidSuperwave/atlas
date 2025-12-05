@@ -47,19 +47,16 @@ const humanDelay = (min: number, max: number) =>
 
 /**
  * Interface for raw lead data extracted from browser
+ * Optimized to only include fields needed for database/enrichment
  */
 interface RawLeadData {
-    name: string;
-    linkedinUrl: string;
-    title: string;
-    companyName: string;
-    companyLinkedin: string;
-    website: string;
-    location: string;
-    companySize: string;
-    industry: string;
-    keywords: string;
-    phoneNumbers: string[];
+    name: string;           // Full name from NAME column
+    title: string;          // From JOB TITLE column
+    companyName: string;    // From COMPANY column
+    website: string;        // Domain from COMPANY LINKS (critical for enrichment)
+    location: string;       // From LOCATION column
+    companySize: string;    // From COMPANY # OF EMPLOYEES column
+    industry: string;       // From COMPANY INDUSTRIES column
 }
 
 /**
@@ -99,154 +96,235 @@ async function getProfileForScrape(userId?: string): Promise<ProfileLookupResult
 }
 
 /**
+ * Debug function to detect what table structure Apollo is using
+ * Run this first to identify the correct selectors
+ */
+async function detectApolloTableStructure(page: Page): Promise<void> {
+    const result = await page.evaluate(() => {
+        const selectors = {
+            // Table selectors
+            'div[role="treegrid"]': document.querySelectorAll('div[role="treegrid"]').length,
+            'table[role="grid"]': document.querySelectorAll('table[role="grid"]').length,
+            '[data-cy="people-table"]': document.querySelectorAll('[data-cy="people-table"]').length,
+            'table': document.querySelectorAll('table').length,
+            '[role="table"]': document.querySelectorAll('[role="table"]').length,
+            // Row selectors
+            'div[role="row"]': document.querySelectorAll('div[role="row"]').length,
+            'tr': document.querySelectorAll('tr').length,
+            '[data-cy="people-table-row"]': document.querySelectorAll('[data-cy="people-table-row"]').length,
+            // Cell selectors
+            'div[role="cell"]': document.querySelectorAll('div[role="cell"]').length,
+            'td': document.querySelectorAll('td').length,
+            '[role="gridcell"]': document.querySelectorAll('[role="gridcell"]').length,
+            // Person link selectors
+            'a[href*="/people/"]': document.querySelectorAll('a[href*="/people/"]').length,
+            'a[href*="/contact/"]': document.querySelectorAll('a[href*="/contact/"]').length,
+            // Company link selectors
+            'a[href*="/organizations/"]': document.querySelectorAll('a[href*="/organizations/"]').length,
+            'a[href*="/accounts/"]': document.querySelectorAll('a[href*="/accounts/"]').length,
+            'a[href*="/company/"]': document.querySelectorAll('a[href*="/company/"]').length,
+            // Checkbox (indicates data rows)
+            'input[type="checkbox"]': document.querySelectorAll('input[type="checkbox"]').length,
+            // Any data-cy attributes
+            '[data-cy]': document.querySelectorAll('[data-cy]').length,
+        };
+        
+        // Get all unique data-cy values
+        const dataCyElements = document.querySelectorAll('[data-cy]');
+        const dataCyValues: string[] = [];
+        dataCyElements.forEach(el => {
+            const val = el.getAttribute('data-cy');
+            if (val && !dataCyValues.includes(val)) {
+                dataCyValues.push(val);
+            }
+        });
+        
+        // Get sample of role attributes
+        const roleElements = document.querySelectorAll('[role]');
+        const roleValues: string[] = [];
+        roleElements.forEach(el => {
+            const val = el.getAttribute('role');
+            if (val && !roleValues.includes(val)) {
+                roleValues.push(val);
+            }
+        });
+        
+        return { selectors, dataCyValues: dataCyValues.slice(0, 30), roleValues };
+    });
+    
+    console.log('[GOLOGIN-SCRAPER] ========== APOLLO TABLE STRUCTURE DETECTION ==========');
+    console.log('[GOLOGIN-SCRAPER] Selector counts:');
+    for (const [selector, count] of Object.entries(result.selectors)) {
+        if (count > 0) {
+            console.log(`[GOLOGIN-SCRAPER]   ${selector}: ${count}`);
+        }
+    }
+    console.log('[GOLOGIN-SCRAPER] data-cy values found:', result.dataCyValues.join(', '));
+    console.log('[GOLOGIN-SCRAPER] role values found:', result.roleValues.join(', '));
+    console.log('[GOLOGIN-SCRAPER] =====================================================');
+}
+
+/**
  * Extract ALL leads from the current page in a SINGLE browser call
- * This is much faster than iterating row by row with multiple round-trips
+ * OPTIMIZED: Uses cell indices for fast, reliable extraction
+ * 
+ * Apollo Table Column Structure (as of Dec 2024):
+ * 0: Checkbox
+ * 1: NAME (person link)
+ * 2: JOB TITLE
+ * 3: COMPANY (company link)
+ * 4: EMAILS (skip - we generate via enrichment)
+ * 5: PHONE NUMBERS (skip)
+ * 6: ACTIONS (skip)
+ * 7: LINKS (person LinkedIn - skip for now)
+ * 8: LOCATION
+ * 9: COMPANY # OF EMPLOYEES
+ * 10: COMPANY INDUSTRIES
+ * 11: COMPANY KEYWORDS (skip)
+ * 12: COMPANY LINKS (website domain - CRITICAL)
  */
 async function extractAllLeadsFromPage(page: Page): Promise<RawLeadData[]> {
     return await page.evaluate(() => {
         const leads: RawLeadData[] = [];
         
-        // Get all rows - try multiple selectors
-        let rows = document.querySelectorAll('div[role="treegrid"] div[role="row"]');
+        // Get all rows from treegrid
+        let rows = document.querySelectorAll('[role="treegrid"] [role="row"]');
         if (rows.length === 0) {
-            rows = document.querySelectorAll('table[role="grid"] tr');
-        }
-        if (rows.length === 0) {
-            rows = document.querySelectorAll('[data-cy="people-table-row"]');
+            rows = document.querySelectorAll('[role="row"]');
         }
         
-        rows.forEach((row) => {
+        console.log(`[EXTRACT] Found ${rows.length} rows`);
+        
+        rows.forEach((row, rowIndex) => {
             try {
                 // Check for checkbox to ensure it's a data row (not header)
                 const hasCheckbox = row.querySelector('input[type="checkbox"]');
                 if (!hasCheckbox) return;
                 
-                // Get all cells
-                const cells = row.querySelectorAll('div[role="cell"], td');
-                if (cells.length < 3) return;
-                
-                // Extract person name and LinkedIn URL
-                const personLink = row.querySelector('a[href*="/people/"]') || 
-                                   row.querySelector('a[data-link-type="person"]') ||
-                                   row.querySelector('[data-cy="person-name"] a');
-                
-                if (!personLink) return;
-                
-                const name = personLink.textContent?.trim() || '';
-                if (!name) return;
-                
-                let linkedinUrl = personLink.getAttribute('href') || '';
-                if (linkedinUrl && !linkedinUrl.startsWith('http')) {
-                    linkedinUrl = `https://app.apollo.io${linkedinUrl}`;
+                // Get all cells in the row
+                const cells = row.querySelectorAll('[role="cell"], [role="gridcell"]');
+                if (cells.length < 8) {
+                    console.log(`[EXTRACT] Row ${rowIndex}: Only ${cells.length} cells, skipping`);
+                    return;
                 }
                 
-                // Extract company data
-                const companyLink = row.querySelector('a[href*="/organizations/"]') ||
-                                    row.querySelector('a[href*="/accounts/"]') ||
-                                    row.querySelector('a[data-link-type="company"]') ||
-                                    row.querySelector('[data-cy="company-name"] a');
+                // === EXTRACT NAME (Cell 1) ===
+                // Look for person link in the name cell
+                const nameCell = cells[1];
+                const personLink = nameCell?.querySelector('a[href*="/people/"]') || 
+                                   nameCell?.querySelector('a');
+                const name = personLink?.textContent?.trim() || nameCell?.textContent?.trim() || '';
                 
-                let companyName = companyLink?.textContent?.trim() || '';
-                
-                // Fallback: get company from cell index
-                if (!companyName && cells.length >= 4) {
-                    companyName = cells[3]?.textContent?.trim() || '';
+                // Skip rows with "(No Name)" or empty names - can't do enrichment without name
+                if (!name || name === '(No Name)' || name.toLowerCase().includes('no name')) {
+                    console.log(`[EXTRACT] Row ${rowIndex}: Skipping - no valid name`);
+                    return;
                 }
                 
-                // Company LinkedIn
-                const companyLinkedinLink = row.querySelector('a[href*="linkedin.com/company"]');
-                const companyLinkedin = companyLinkedinLink?.getAttribute('href') || '';
+                // === EXTRACT JOB TITLE (Cell 2) ===
+                const title = cells[2]?.textContent?.trim() || '';
                 
-                // Website - find link that's not apollo, linkedin, twitter, facebook
+                // === EXTRACT COMPANY NAME (Cell 3) ===
+                const companyCell = cells[3];
+                const companyLink = companyCell?.querySelector('a[href*="/accounts/"]') ||
+                                    companyCell?.querySelector('a[href*="/organizations/"]') ||
+                                    companyCell?.querySelector('a');
+                const companyName = companyLink?.textContent?.trim() || companyCell?.textContent?.trim() || '';
+                
+                // === EXTRACT LOCATION (Cell 8) ===
+                const location = cells[8]?.textContent?.trim() || '';
+                
+                // === EXTRACT COMPANY SIZE (Cell 9) ===
+                const companySize = cells[9]?.textContent?.trim() || '';
+                
+                // === EXTRACT INDUSTRY (Cell 10) ===
+                const industry = cells[10]?.textContent?.trim() || '';
+                
+                // === EXTRACT WEBSITE from COMPANY LINKS (Cell 12) ===
+                // This is CRITICAL for enrichment - we need the domain
                 let website = '';
-                const allLinks = row.querySelectorAll('a[href^="http"]');
-                for (const link of allLinks) {
-                    const href = link.getAttribute('href') || '';
-                    if (href && 
-                        !href.includes('apollo.io') && 
-                        !href.includes('linkedin.com') && 
-                        !href.includes('twitter.com') && 
-                        !href.includes('facebook.com')) {
-                        website = href;
-                        break;
+                const companyLinksCell = cells[12];
+                if (companyLinksCell) {
+                    // Look for external website link (not social media)
+                    const links = companyLinksCell.querySelectorAll('a[href^="http"]');
+                    for (const link of links) {
+                        const href = link.getAttribute('href') || '';
+                        // Skip social media links
+                        if (href && 
+                            !href.includes('linkedin.com') && 
+                            !href.includes('twitter.com') && 
+                            !href.includes('facebook.com') &&
+                            !href.includes('apollo.io')) {
+                            website = href;
+                            break;
+                        }
                     }
                 }
                 
-                // Extract title from cell index 2
-                const title = cells.length >= 3 ? (cells[2]?.textContent?.trim() || '') : '';
-                
-                // Extract location from cell index 9
-                const location = cells.length >= 10 ? (cells[9]?.textContent?.trim() || '') : '';
-                
-                // Extract company size from cell index 10
-                const companySize = cells.length >= 11 ? (cells[10]?.textContent?.trim() || '') : '';
-                
-                // Extract industry from cell index 11
-                const industry = cells.length >= 12 ? (cells[11]?.textContent?.trim() || '') : '';
-                
-                // Extract keywords from cell index 12
-                const keywords = cells.length >= 13 ? (cells[12]?.textContent?.trim() || '') : '';
-                
-                // Extract phone numbers
-                const phoneNumbers: string[] = [];
-                const telLinks = row.querySelectorAll('a[href^="tel:"]');
-                telLinks.forEach(telLink => {
-                    const phone = telLink.textContent?.trim();
-                    if (phone && phone !== 'Access Mobile') {
-                        phoneNumbers.push(phone);
+                // If no website in company links, try to find it elsewhere in the row
+                if (!website) {
+                    const allLinks = row.querySelectorAll('a[href^="http"]');
+                    for (const link of allLinks) {
+                        const href = link.getAttribute('href') || '';
+                        if (href && 
+                            !href.includes('apollo.io') && 
+                            !href.includes('linkedin.com') && 
+                            !href.includes('twitter.com') && 
+                            !href.includes('facebook.com') &&
+                            !href.includes('crunchbase.com')) {
+                            website = href;
+                            break;
+                        }
                     }
-                });
+                }
+                
+                // Log what we extracted for debugging
+                console.log(`[EXTRACT] Row ${rowIndex}: ${name} | ${title} | ${companyName} | ${website || 'NO WEBSITE'}`);
                 
                 leads.push({
                     name,
-                    linkedinUrl,
                     title,
                     companyName,
-                    companyLinkedin,
                     website,
                     location,
                     companySize,
-                    industry,
-                    keywords,
-                    phoneNumbers
+                    industry
                 });
                 
             } catch (err) {
-                // Skip this row on error
-                console.error('Error parsing row:', err);
+                console.error(`[EXTRACT] Error parsing row ${rowIndex}:`, err);
             }
         });
         
+        console.log(`[EXTRACT] Successfully extracted ${leads.length} leads`);
         return leads;
     });
 }
 
 /**
  * Convert raw lead data to ScrapedLead format
+ * Optimized version - only includes fields needed for enrichment
  */
 function convertToScrapedLead(raw: RawLeadData): ScrapedLead {
-    const nameParts = raw.name.split(' ');
+    // Split name into first and last
+    const nameParts = raw.name.trim().split(/\s+/);
     const firstName = nameParts[0] || '';
     const lastName = nameParts.slice(1).join(' ') || '';
-    
-    const keywords = raw.keywords 
-        ? raw.keywords.split(',').map(k => k.trim()).filter(k => k)
-        : [];
     
     return {
         first_name: firstName,
         last_name: lastName,
-        title: raw.title,
-        company_name: raw.companyName,
-        company_linkedin: raw.companyLinkedin,
-        location: raw.location,
-        company_size: raw.companySize,
-        industry: raw.industry,
-        website: raw.website,
-        keywords,
-        email: undefined,
-        linkedin_url: raw.linkedinUrl,
-        phone_numbers: raw.phoneNumbers
+        title: raw.title || '',
+        company_name: raw.companyName || '',
+        company_linkedin: '', // Not extracted in optimized version
+        location: raw.location || '',
+        company_size: raw.companySize || '',
+        industry: raw.industry || '',
+        website: raw.website || '',
+        keywords: [], // Not extracted in optimized version
+        email: undefined, // Generated by enrichment
+        linkedin_url: '', // Not extracted in optimized version
+        phone_numbers: [] // Not extracted in optimized version
     };
 }
 
@@ -327,12 +405,21 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
         for (let currentPage = 1; currentPage <= pages; currentPage++) {
             console.log(`[GOLOGIN-SCRAPER] Processing page ${currentPage}/${pages}...`);
 
-            // Wait for table - try multiple selectors
+            // Run structure detection on first page to help debug selector issues
+            if (currentPage === 1) {
+                await detectApolloTableStructure(page);
+            }
+
+            // Wait for table - try multiple selectors (expanded for newer Apollo versions)
             const tableSelectors = [
                 'div[role="treegrid"]',
                 'table[role="grid"]',
                 '[data-cy="people-table"]',
-                '.zp_tZMWg'
+                'table tbody',
+                '[role="table"]',
+                '.zp_tZMWg',
+                // Fallback: any table with rows
+                'table:has(tr)'
             ];
             
             let tableFound = false;
@@ -352,11 +439,39 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
                 const currentUrl = page.url();
                 console.log(`[GOLOGIN-SCRAPER] Current URL: ${currentUrl}`);
                 
+                // Log page title and some content for debugging
+                const pageTitle = await page.title();
+                console.log(`[GOLOGIN-SCRAPER] Page title: ${pageTitle}`);
+                
+                // Try to get page content summary for debugging
+                try {
+                    const bodyText = await page.evaluate(() => {
+                        const body = document.body;
+                        return body ? body.innerText.substring(0, 500) : '(no body)';
+                    });
+                    console.log(`[GOLOGIN-SCRAPER] Page content preview: ${bodyText.substring(0, 200)}...`);
+                } catch (e) {
+                    console.log('[GOLOGIN-SCRAPER] Could not get page content');
+                }
+                
+                // Take screenshot for debugging (save to /tmp or log as base64)
+                try {
+                    const screenshot = await page.screenshot({ encoding: 'base64' });
+                    console.log(`[GOLOGIN-SCRAPER] Screenshot (base64, first 200 chars): ${screenshot.substring(0, 200)}...`);
+                    console.log(`[GOLOGIN-SCRAPER] Full screenshot length: ${screenshot.length} characters`);
+                } catch (e) {
+                    console.log('[GOLOGIN-SCRAPER] Could not take screenshot');
+                }
+                
                 if (currentUrl.includes('/login') || currentUrl.includes('/sign')) {
                     throw new Error('Not logged into Apollo. Please log in using the GoLogin browser profile.');
                 }
                 
-                throw new Error('Apollo table not found. Ensure you are logged in and on a valid search page.');
+                if (currentUrl.includes('challenge') || pageTitle.includes('Cloudflare')) {
+                    throw new Error('Cloudflare challenge detected. The browser may need manual interaction or a better proxy.');
+                }
+                
+                throw new Error(`Apollo table not found. URL: ${currentUrl}, Title: ${pageTitle}. Ensure you are logged in and on a valid search page.`);
             }
 
             // Small scroll to ensure all rows are visible
