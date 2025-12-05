@@ -5,9 +5,10 @@ import { generatePermutations, extractDomain } from '@/lib/permutation-utils';
 import { getCurrentUser, getUserProfile } from '@/lib/supabase-server';
 import { handleCors, corsJsonResponse } from '@/lib/cors';
 
+// Use service role key to bypass RLS for server-side operations
 const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
 // Handle CORS preflight requests
