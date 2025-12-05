@@ -127,6 +127,9 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                 // Skip header rows
                 if (row.querySelector('[role="columnheader"], th')) continue;
 
+                // Check for checkbox to ensure it's a data row (like local scraper)
+                if (!row.querySelector('input[type="checkbox"]')) continue;
+
                 // Get all cells in this row
                 const cells = row.querySelectorAll('[role="gridcell"]');
 
@@ -200,13 +203,13 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                 // ========================================
                 // OPTIONAL FIELDS FROM OTHER CELLS
                 // Cell 2: Job title
-                // Cell 3: Company
-                // Cell 4: Links (person's LinkedIn)
-                // Cell 5: Company · Links (already got website above)
-                // Cell 6: Company · Industries
-                // Cell 7: Location
-                // Cell 8: Company · Number of employees
-                // Cell 9: Company · Keywords
+                // Cell 3: Company (semantic selector + fallback)
+                // Cell 6: Person's LinkedIn (semantic selector)
+                // Cell 9: Location
+                // Cell 10: Company size
+                // Cell 11: Industry
+                // Cell 12: Keywords
+                // Cell 13: Company Links (website, LinkedIn - semantic selectors)
                 // ========================================
 
                 // Cell 2: Job title
@@ -248,28 +251,28 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                     companyLinkedin = companyLinkedinLink.getAttribute('data-href') || companyLinkedinLink.href || '';
                 }
 
-                // Cell 6: Industry
-                let industry = '';
-                if (cells.length > 6) {
-                    industry = cells[6]?.textContent?.trim() || '';
-                }
-
-                // Cell 7: Location
+                // Cell 9: Location
                 let location = '';
-                if (cells.length > 7) {
-                    location = cells[7]?.textContent?.trim() || '';
-                }
-
-                // Cell 8: Company size
-                let companySize = '';
-                if (cells.length > 8) {
-                    companySize = cells[8]?.textContent?.trim() || '';
-                }
-
-                // Cell 9: Keywords
-                let keywords: string[] = [];
                 if (cells.length > 9) {
-                    const keywordsText = cells[9]?.textContent?.trim() || '';
+                    location = cells[9]?.textContent?.trim() || '';
+                }
+
+                // Cell 10: Company size
+                let companySize = '';
+                if (cells.length > 10) {
+                    companySize = cells[10]?.textContent?.trim() || '';
+                }
+
+                // Cell 11: Industry
+                let industry = '';
+                if (cells.length > 11) {
+                    industry = cells[11]?.textContent?.trim() || '';
+                }
+
+                // Cell 12: Keywords
+                let keywords: string[] = [];
+                if (cells.length > 12) {
+                    const keywordsText = cells[12]?.textContent?.trim() || '';
                     if (keywordsText) {
                         keywords = keywordsText.split(',').map(k => k.trim()).filter(k => k);
                     }
@@ -353,7 +356,7 @@ function convertToScrapedLead(raw: RawLeadData): ScrapedLead {
         location: raw.location,
         company_size: raw.companySize,
         industry: raw.industry,
-        website: raw.domain ? `https://${raw.domain}` : '',
+        website: raw.domain || '',  // Store domain only (e.g., "acme.com"), not full URL
         keywords: raw.keywords || [],
         email: undefined,
         linkedin_url: raw.personLinkedin || '',  // Person's LinkedIn URL from Cell 4
