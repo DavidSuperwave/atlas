@@ -397,99 +397,111 @@ export default function AdminDashboardPage() {
 
                 {/* Daily Usage & Queue Status */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-                    {/* Daily API Usage Card */}
-                    <div className={`bg-white rounded-xl border p-6 ${
-                        adminStats?.dailyUsage.isAtLimit 
-                            ? 'border-red-300 bg-red-50' 
-                            : adminStats?.dailyUsage.isApproachingLimit 
-                                ? 'border-amber-300 bg-amber-50' 
-                                : 'border-gray-200'
-                    }`}>
-                        <div className="flex items-center justify-between mb-4">
-                            <h3 className="text-lg font-semibold text-gray-900">Daily API Usage</h3>
-                            <div className="flex items-center gap-2">
-                                {adminStats?.dailyUsage.isAtLimit && (
-                                    <span className="px-2 py-1 text-xs font-medium bg-red-100 text-red-800 rounded-full">
-                                        Limit Reached
-                                    </span>
-                                )}
-                                {adminStats?.dailyUsage.isApproachingLimit && !adminStats?.dailyUsage.isAtLimit && (
-                                    <span className="px-2 py-1 text-xs font-medium bg-amber-100 text-amber-800 rounded-full">
-                                        Approaching Limit
-                                    </span>
-                                )}
-                                <span className="text-xs text-gray-500">Mail Tester Ninja Ultimate</span>
-                            </div>
-                        </div>
+                    {/* Daily API Usage Card - Using aggregated data from API keys */}
+                    {(() => {
+                        // Calculate aggregated stats from API keys
+                        const totalDailyUsed = adminStats?.apiKeys?.stats?.reduce((sum, key) => sum + key.dailyCount, 0) || 0;
+                        const totalDailyRemaining = adminStats?.apiKeys?.stats?.reduce((sum, key) => sum + key.dailyRemaining, 0) || 0;
+                        const dailyLimit = adminStats?.apiKeys?.capacity?.requestsPerDay || 1000000;
+                        const usagePercentage = dailyLimit > 0 ? (totalDailyUsed / dailyLimit) * 100 : 0;
+                        const isApproachingLimit = usagePercentage >= 80;
+                        const isAtLimit = usagePercentage >= 95;
 
-                        {statsLoading ? (
-                            <div className="flex items-center justify-center h-32">
-                                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
-                            </div>
-                        ) : adminStats ? (
-                            <>
-                                {/* Progress Bar */}
-                                <div className="mb-4">
-                                    <div className="flex justify-between text-sm mb-1">
-                                        <span className="text-gray-600">
-                                            {formatNumber(adminStats.dailyUsage.creditsUsed)} used
-                                        </span>
-                                        <span className="text-gray-600">
-                                            {formatNumber(adminStats.dailyUsage.creditsRemaining)} remaining
-                                        </span>
-                                    </div>
-                                    <div className="w-full bg-gray-200 rounded-full h-3">
-                                        <div 
-                                            className={`h-3 rounded-full transition-all ${
-                                                adminStats.dailyUsage.isAtLimit 
-                                                    ? 'bg-red-500' 
-                                                    : adminStats.dailyUsage.isApproachingLimit 
-                                                        ? 'bg-amber-500' 
-                                                        : 'bg-emerald-500'
-                                            }`}
-                                            style={{ width: `${Math.min(adminStats.dailyUsage.usagePercentage, 100)}%` }}
-                                        ></div>
-                                    </div>
-                                    <div className="text-right text-xs text-gray-500 mt-1">
-                                        {adminStats.dailyUsage.usagePercentage.toFixed(2)}% of {formatNumber(adminStats.dailyUsage.dailyLimit)} daily limit
+                        return (
+                            <div className={`bg-white rounded-xl border p-6 ${
+                                isAtLimit 
+                                    ? 'border-red-300 bg-red-50' 
+                                    : isApproachingLimit 
+                                        ? 'border-amber-300 bg-amber-50' 
+                                        : 'border-gray-200'
+                            }`}>
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="text-lg font-semibold text-gray-900">Daily API Usage</h3>
+                                    <div className="flex items-center gap-2">
+                                        {isAtLimit && (
+                                            <span className="px-2 py-1 text-xs font-medium bg-red-100 text-red-800 rounded-full">
+                                                Limit Reached
+                                            </span>
+                                        )}
+                                        {isApproachingLimit && !isAtLimit && (
+                                            <span className="px-2 py-1 text-xs font-medium bg-amber-100 text-amber-800 rounded-full">
+                                                Approaching Limit
+                                            </span>
+                                        )}
+                                        <span className="text-xs text-gray-500">Mail Tester Ninja</span>
                                     </div>
                                 </div>
 
-                                {/* Rate Limit Info */}
-                                <div className="grid grid-cols-2 gap-4 text-sm">
-                                    <div className="bg-gray-50 rounded-lg p-3">
-                                        <p className="text-gray-500">Rate Limit</p>
-                                        <p className="font-semibold text-gray-900">
-                                            {adminStats.queue.rateLimit.emailsPer30Seconds} / 30s
-                                        </p>
+                                {statsLoading ? (
+                                    <div className="flex items-center justify-center h-32">
+                                        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
                                     </div>
-                                    <div className="bg-gray-50 rounded-lg p-3">
-                                        <p className="text-gray-500">Processing Speed</p>
-                                        <p className="font-semibold text-gray-900">
-                                            ~{adminStats.queue.rateLimit.maxEmailsPerSecond} emails/sec
-                                        </p>
-                                    </div>
-                                </div>
-
-                                {/* Per-User Usage */}
-                                {adminStats.dailyUsage.perUserUsage.length > 0 && (
-                                    <div className="mt-4">
-                                        <p className="text-sm font-medium text-gray-700 mb-2">Usage by User Today</p>
-                                        <div className="space-y-2 max-h-32 overflow-y-auto">
-                                            {adminStats.dailyUsage.perUserUsage.map((u) => (
-                                                <div key={u.userId} className="flex justify-between items-center text-sm">
-                                                    <span className="text-gray-600 truncate max-w-[200px]">{u.email}</span>
-                                                    <span className="font-medium text-gray-900">{u.creditsUsed.toLocaleString()}</span>
-                                                </div>
-                                            ))}
+                                ) : adminStats ? (
+                                    <>
+                                        {/* Progress Bar */}
+                                        <div className="mb-4">
+                                            <div className="flex justify-between text-sm mb-1">
+                                                <span className="text-gray-600">
+                                                    {formatNumber(totalDailyUsed)} used
+                                                </span>
+                                                <span className="text-gray-600">
+                                                    {formatNumber(totalDailyRemaining)} remaining
+                                                </span>
+                                            </div>
+                                            <div className="w-full bg-gray-200 rounded-full h-3">
+                                                <div 
+                                                    className={`h-3 rounded-full transition-all ${
+                                                        isAtLimit 
+                                                            ? 'bg-red-500' 
+                                                            : isApproachingLimit 
+                                                                ? 'bg-amber-500' 
+                                                                : 'bg-emerald-500'
+                                                    }`}
+                                                    style={{ width: `${Math.min(usagePercentage, 100)}%` }}
+                                                ></div>
+                                            </div>
+                                            <div className="text-right text-xs text-gray-500 mt-1">
+                                                {usagePercentage.toFixed(2)}% of {formatNumber(dailyLimit)} daily limit
+                                            </div>
                                         </div>
-                                    </div>
+
+                                        {/* Rate Limit Info */}
+                                        <div className="grid grid-cols-2 gap-4 text-sm">
+                                            <div className="bg-gray-50 rounded-lg p-3">
+                                                <p className="text-gray-500">Rate Limit</p>
+                                                <p className="font-semibold text-gray-900">
+                                                    {adminStats.queue.rateLimit.emailsPer30Seconds} / 30s
+                                                </p>
+                                            </div>
+                                            <div className="bg-gray-50 rounded-lg p-3">
+                                                <p className="text-gray-500">Processing Speed</p>
+                                                <p className="font-semibold text-gray-900">
+                                                    ~{adminStats.queue.rateLimit.maxEmailsPerSecond} emails/sec
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        {/* Per-User Usage */}
+                                        {adminStats.dailyUsage.perUserUsage.length > 0 && (
+                                            <div className="mt-4">
+                                                <p className="text-sm font-medium text-gray-700 mb-2">Usage by User Today</p>
+                                                <div className="space-y-2 max-h-32 overflow-y-auto">
+                                                    {adminStats.dailyUsage.perUserUsage.map((u) => (
+                                                        <div key={u.userId} className="flex justify-between items-center text-sm">
+                                                            <span className="text-gray-600 truncate max-w-[200px]">{u.email}</span>
+                                                            <span className="font-medium text-gray-900">{u.creditsUsed.toLocaleString()}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </>
+                                ) : (
+                                    <p className="text-gray-500 text-center py-8">Unable to load stats</p>
                                 )}
-                            </>
-                        ) : (
-                            <p className="text-gray-500 text-center py-8">Unable to load stats</p>
-                        )}
-                    </div>
+                            </div>
+                        );
+                    })()}
 
                     {/* Queue Status Card */}
                     <div className="bg-white rounded-xl border border-gray-200 p-6">

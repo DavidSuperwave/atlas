@@ -17,6 +17,7 @@
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { ScrapedLead } from './scraper-types';
+import { getUserProfileId, ProfileLookupResult } from './gologin-profile-manager';
 
 // Lazy-loaded scraper function to avoid module load issues
 let scrapeApolloFn: ((url: string, pages?: number, userId?: string) => Promise<ScrapedLead[]>) | null = null;
@@ -27,6 +28,13 @@ async function getScrapeApollo() {
         scrapeApolloFn = module.scrapeApollo;
     }
     return scrapeApolloFn;
+}
+
+/**
+ * Get the profile ID that will be used for a user's scrape
+ */
+async function getProfileForUser(userId: string): Promise<ProfileLookupResult> {
+    return getUserProfileId(userId);
 }
 
 // Lazy-loaded Supabase client to avoid module load failures
@@ -195,6 +203,74 @@ class ScrapeQueue {
     }
 
     /**
+     * Clean up stale sessions on startup
+     */
+    private async cleanupStaleSessions(): Promise<void> {
+        try {
+            const supabase = getSupabase();
+            const now = new Date();
+            const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+            
+            // Get ALL active sessions to check
+            const { data: activeSessions, error: selectError } = await supabase
+                .from('browser_sessions')
+                .select('id, started_at, last_heartbeat')
+                .eq('status', 'active');
+            
+            if (selectError) {
+                console.warn(`[SCRAPE-QUEUE] Error finding active sessions: ${selectError.message}`);
+            } else if (activeSessions && activeSessions.length > 0) {
+                console.log(`[SCRAPE-QUEUE] Found ${activeSessions.length} active browser session(s), checking for stale...`);
+                
+                // Find stale sessions (use last_heartbeat if available, otherwise started_at)
+                const staleSessions = activeSessions.filter(s => {
+                    const checkTime = s.last_heartbeat || s.started_at;
+                    if (!checkTime) return true; // No timestamp = stale
+                    return new Date(checkTime).getTime() < fiveMinutesAgo.getTime();
+                });
+                
+                if (staleSessions.length > 0) {
+                    console.log(`[SCRAPE-QUEUE] Cleaning up ${staleSessions.length} stale browser session(s)...`);
+                    
+                    for (const session of staleSessions) {
+                        await supabase
+                            .from('browser_sessions')
+                            .update({ status: 'completed', ended_at: now.toISOString() })
+                            .eq('id', session.id);
+                    }
+                    console.log(`[SCRAPE-QUEUE] ✓ Stale sessions cleaned`);
+                } else {
+                    console.log(`[SCRAPE-QUEUE] No stale sessions found`);
+                }
+            }
+            
+            // Also check for stuck 'running' scrapes
+            const { data: stuckScrapes } = await supabase
+                .from('scrape_queue')
+                .select('id, scrape_id')
+                .eq('status', 'running')
+                .lt('started_at', fiveMinutesAgo.toISOString());
+            
+            if (stuckScrapes && stuckScrapes.length > 0) {
+                console.log(`[SCRAPE-QUEUE] Found ${stuckScrapes.length} stuck scrape(s), resetting to pending...`);
+                for (const stuck of stuckScrapes) {
+                    await supabase
+                        .from('scrape_queue')
+                        .update({ status: 'pending', started_at: null })
+                        .eq('id', stuck.id);
+                    await supabase
+                        .from('scrapes')
+                        .update({ status: 'queued' })
+                        .eq('id', stuck.scrape_id);
+                }
+                console.log(`[SCRAPE-QUEUE] ✓ Stuck scrapes reset`);
+            }
+        } catch (error) {
+            console.warn(`[SCRAPE-QUEUE] Startup cleanup error:`, error);
+        }
+    }
+
+    /**
      * Start the queue processor
      * Call this when the server starts
      */
@@ -223,13 +299,28 @@ class ScrapeQueue {
         
         this.processorStarted = true;
         
-        // Process immediately on start
-        this.processNext().catch(err => {
-            console.error('[SCRAPE-QUEUE] Error in initial processNext:', err);
+        // Clean up stale sessions before processing
+        this.cleanupStaleSessions().then(() => {
+            // Process immediately on start
+            this.processNext().catch(err => {
+                console.error('[SCRAPE-QUEUE] Error in initial processNext:', err);
+            });
+        }).catch(err => {
+            console.error('[SCRAPE-QUEUE] Error in startup cleanup:', err);
+            // Still try to process even if cleanup fails
+            this.processNext().catch(err => {
+                console.error('[SCRAPE-QUEUE] Error in initial processNext:', err);
+            });
         });
 
         // Then poll regularly
+        let pollCount = 0;
         this.processorInterval = setInterval(() => {
+            pollCount++;
+            // Log heartbeat every 20 polls (~1 minute) to verify processor is running
+            if (pollCount % 20 === 0) {
+                console.log(`[SCRAPE-QUEUE] Heartbeat: processor alive, ${pollCount} polls completed`);
+            }
             this.processNext().catch(err => {
                 console.error('[SCRAPE-QUEUE] Error in processNext:', err);
             });
@@ -251,31 +342,47 @@ class ScrapeQueue {
     }
 
     /**
-     * Check if the browser is available for scraping
+     * Check if a specific profile is available for scraping
+     * 
+     * @param profileId - The GoLogin profile ID to check (if not provided, checks any)
      */
-    async getBrowserState(): Promise<{ state: BrowserState; session?: { user_id: string; session_type: string } }> {
+    async getBrowserState(profileId?: string): Promise<{ state: BrowserState; session?: { user_id: string; session_type: string; profile_id?: string } }> {
         const supabase = getSupabase();
-        const { data: activeSession } = await supabase
+        
+        // Build query - check specific profile if provided, otherwise check all
+        let query = supabase
             .from('browser_sessions')
             .select('*')
             .eq('status', 'active')
             .order('started_at', { ascending: false })
-            .limit(1)
-            .single();
+            .limit(1);
+        
+        if (profileId) {
+            query = query.eq('profile_id', profileId);
+        }
+        
+        const { data: activeSession, error } = await query.single();
+
+        if (error && error.code !== 'PGRST116') {
+            // PGRST116 = no rows returned (which is fine)
+            console.error(`[SCRAPE-QUEUE] Error checking browser sessions: ${error.message}`);
+        }
 
         if (!activeSession) {
             return { state: 'available' };
         }
 
-        // Check if session is stale (no heartbeat in 30 minutes, or started > 30 min ago)
+        // Check if session is stale (no heartbeat in 5 minutes for more responsive cleanup)
         const lastHeartbeat = activeSession.last_heartbeat 
             ? new Date(activeSession.last_heartbeat).getTime() 
             : new Date(activeSession.started_at).getTime();
         const now = Date.now();
         
-        // If no activity for 30 minutes OR session started more than 30 minutes ago, mark as stale
-        if (now - lastHeartbeat > 30 * 60 * 1000) {
-            console.log(`[SCRAPE-QUEUE] Clearing stale browser session: ${activeSession.id}`);
+        // Reduced to 5 minutes for faster cleanup of stale sessions
+        const STALE_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+        
+        if (now - lastHeartbeat > STALE_THRESHOLD) {
+            console.log(`[SCRAPE-QUEUE] Clearing stale browser session: ${activeSession.id} (profile: ${activeSession.profile_id}, last heartbeat: ${Math.round((now - lastHeartbeat) / 60000)} min ago)`);
             await supabase
                 .from('browser_sessions')
                 .update({ status: 'completed', ended_at: new Date().toISOString() })
@@ -286,13 +393,13 @@ class ScrapeQueue {
         if (activeSession.session_type === 'manual') {
             return { 
                 state: 'manual_use', 
-                session: { user_id: activeSession.user_id, session_type: 'manual' } 
+                session: { user_id: activeSession.user_id, session_type: 'manual', profile_id: activeSession.profile_id } 
             };
         }
 
         return { 
             state: 'scraping', 
-            session: { user_id: activeSession.user_id, session_type: 'scrape' } 
+            session: { user_id: activeSession.user_id, session_type: 'scrape', profile_id: activeSession.profile_id } 
         };
     }
 
@@ -310,7 +417,15 @@ class ScrapeQueue {
             .limit(1)
             .single();
 
-        if (error || !data) {
+        if (error) {
+            // PGRST116 = no rows returned (which is normal when queue is empty)
+            if (error.code !== 'PGRST116') {
+                console.error(`[SCRAPE-QUEUE] Error fetching pending scrape: ${error.message} (code: ${error.code})`);
+            }
+            return null;
+        }
+
+        if (!data) {
             return null;
         }
 
@@ -347,17 +462,39 @@ class ScrapeQueue {
         try {
             const supabase = getSupabase();
             
-            // Check browser availability
-            const { state } = await this.getBrowserState();
-            if (state !== 'available') {
-                // Browser is in use, skip this cycle
-                return;
-            }
-
-            // Get next pending scrape
+            // Get next pending scrape first (to know which user/profile we need)
             const nextItem = await this.getNextPendingScrape();
             if (!nextItem) {
                 // No pending scrapes
+                return;
+            }
+            
+            console.log(`[SCRAPE-QUEUE] Found pending item: scrape_id=${nextItem.scrape_id}, user_id=${nextItem.user_id}`);
+            
+            // Look up the profile that will be used for this user
+            const profileResult = await getProfileForUser(nextItem.user_id);
+            if (!profileResult.profileId) {
+                console.error(`[SCRAPE-QUEUE] No profile available for user ${nextItem.user_id}: ${profileResult.error}`);
+                // Mark the scrape as failed
+                await supabase.from('scrape_queue').update({ 
+                    status: 'failed', 
+                    error_message: profileResult.error || 'No GoLogin profile assigned',
+                    completed_at: new Date().toISOString()
+                }).eq('id', nextItem.id);
+                await supabase.from('scrapes').update({ 
+                    status: 'failed',
+                    error_details: { message: profileResult.error || 'No GoLogin profile assigned' }
+                }).eq('id', nextItem.scrape_id);
+                return;
+            }
+            
+            console.log(`[SCRAPE-QUEUE] User ${nextItem.user_id} will use profile: ${profileResult.profileId} (source: ${profileResult.source})`);
+            
+            // Check if THIS specific profile is available
+            const { state, session } = await this.getBrowserState(profileResult.profileId);
+            if (state !== 'available') {
+                // This profile is in use, skip this cycle
+                console.log(`[SCRAPE-QUEUE] Profile ${profileResult.profileId} not available (state: ${state}), session: ${JSON.stringify(session)}`);
                 return;
             }
 
@@ -376,11 +513,11 @@ class ScrapeQueue {
                 })
                 .eq('id', nextItem.id);
 
-            // Create browser session record
-            const { data: session } = await supabase
+            // Create browser session record with the ACTUAL profile being used
+            const { data: browserSession } = await supabase
                 .from('browser_sessions')
                 .insert({
-                    profile_id: process.env.GOLOGIN_PROFILE_ID || 'default',
+                    profile_id: profileResult.profileId,
                     user_id: nextItem.user_id,
                     session_type: 'scrape',
                     status: 'active',
@@ -406,10 +543,9 @@ class ScrapeQueue {
                 ? Number(scrapeDetails.filters.pages) || 1
                 : 1;
 
-            console.log(`[SCRAPE-QUEUE] Scraping ${pages} page(s) for URL: ${scrapeDetails.url}`);
+            console.log(`[SCRAPE-QUEUE] Scraping ${pages} page(s) from ${scrapeDetails.url} using profile ${profileResult.profileId}`);
 
             // Run the scraper (lazy load to avoid module issues)
-            console.log(`[SCRAPE-QUEUE] Starting scraper for URL: ${scrapeDetails.url}`);
             const scrapeApollo = await getScrapeApollo();
             const leads = await scrapeApollo(scrapeDetails.url, pages, nextItem.user_id);
 
@@ -441,14 +577,14 @@ class ScrapeQueue {
                 .eq('id', nextItem.scrape_id);
 
             // Close browser session
-            if (session) {
+            if (browserSession) {
                 await supabase
                     .from('browser_sessions')
                     .update({ 
                         status: 'completed', 
                         ended_at: new Date().toISOString() 
                     })
-                    .eq('id', session.id);
+                    .eq('id', browserSession.id);
             }
 
             console.log(`[SCRAPE-QUEUE] ✓ Scrape completed: ${processedCount} leads saved, ${duplicateCount} duplicates skipped`);

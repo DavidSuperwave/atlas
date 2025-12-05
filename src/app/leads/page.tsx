@@ -56,6 +56,27 @@ export default function LeadsPage() {
     const [sortField, setSortField] = useState<string>('created_at');
     const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
+    // Pagination state
+    const [currentPage, setCurrentPage] = useState(1);
+    const LEADS_PER_PAGE = 50;
+
+    // Export settings state
+    const [showExportSettings, setShowExportSettings] = useState(false);
+    const [exportFilter, setExportFilter] = useState('valid+catchall');
+    const [exportColumns, setExportColumns] = useState({
+        firstName: true,
+        lastName: true,
+        middleName: false,
+        fullName: false,
+        companyName: true,
+        companyWebsite: true,
+        linkedinUrl: true,
+        contactEmail: true,
+        title: true,
+        industry: false,
+        location: false,
+    });
+
     useEffect(() => {
         if (user) {
             checkAdminAndFetchLeads();
@@ -381,6 +402,24 @@ export default function LeadsPage() {
         return result;
     }, [leads, filters, sortField, sortDirection, jobTitleCategories]);
 
+    // Pagination calculations
+    const totalPages = Math.ceil(filteredLeads.length / LEADS_PER_PAGE);
+    const paginatedLeads = useMemo(() => {
+        const startIndex = (currentPage - 1) * LEADS_PER_PAGE;
+        return filteredLeads.slice(startIndex, startIndex + LEADS_PER_PAGE);
+    }, [filteredLeads, currentPage]);
+
+    // Reset to page 1 when filters change
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [filters, sortField, sortDirection]);
+
+    // Count valid and catchall leads for export
+    const validCount = useMemo(() => 
+        filteredLeads.filter(l => l.email_validity === 'ok').length, [filteredLeads]);
+    const catchallCount = useMemo(() => 
+        filteredLeads.filter(l => l.email_validity === 'mb').length, [filteredLeads]);
+
     const handleFilterChange = (key: keyof typeof filters, value: string | boolean | string[]) => {
         setFilters(prev => ({ ...prev, [key]: value }));
     };
@@ -415,10 +454,23 @@ export default function LeadsPage() {
 
     // Selection handlers
     const toggleSelectAll = () => {
-        if (selectedIds.size === filteredLeads.length) {
-            setSelectedIds(new Set());
+        const currentPageIds = paginatedLeads.map(l => l.id);
+        const allCurrentPageSelected = currentPageIds.every(id => selectedIds.has(id));
+        
+        if (allCurrentPageSelected) {
+            // Deselect all on current page
+            setSelectedIds(prev => {
+                const next = new Set(prev);
+                currentPageIds.forEach(id => next.delete(id));
+                return next;
+            });
         } else {
-            setSelectedIds(new Set(filteredLeads.map(l => l.id)));
+            // Select all on current page
+            setSelectedIds(prev => {
+                const next = new Set(prev);
+                currentPageIds.forEach(id => next.add(id));
+                return next;
+            });
         }
     };
 
@@ -467,34 +519,68 @@ export default function LeadsPage() {
         setDeleteTarget(null);
     };
 
+    function escapeCSV(value: string): string {
+        if (!value) return '';
+        // Escape quotes and wrap in quotes if contains comma, quote, or newline
+        if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+            return `"${value.replace(/"/g, '""')}"`;
+        }
+        return value;
+    }
+
     function downloadCSV() {
-        const headers = ['First Name', 'Last Name', 'Company Website', 'Company Size', 'Email', 'Pattern Used'];
+        // Build dynamic headers based on selected columns
+        const headers: string[] = [];
+        if (exportColumns.firstName) headers.push('First Name');
+        if (exportColumns.lastName) headers.push('Last Name');
+        if (exportColumns.middleName) headers.push('Middle Name');
+        if (exportColumns.fullName) headers.push('Full Name');
+        if (exportColumns.companyName) headers.push('Company Name');
+        if (exportColumns.companyWebsite) headers.push('Company Website');
+        if (exportColumns.linkedinUrl) headers.push('LinkedIn URL');
+        if (exportColumns.contactEmail) headers.push('Contact Email');
+        if (exportColumns.title) headers.push('Title');
+        if (exportColumns.industry) headers.push('Industry');
+        if (exportColumns.location) headers.push('Location');
+
         const rows: string[] = [];
 
-        filteredLeads.forEach(lead => {
-            const permutations = lead.verification_data?.permutations_checked || [];
-
-            if (permutations.length === 0) {
-                rows.push([
-                    lead.first_name,
-                    lead.last_name,
-                    lead.website || '',
-                    '',
-                    lead.email || '',
-                    ''
-                ].join(','));
-            } else {
-                permutations.forEach((perm: any) => {
-                    rows.push([
-                        lead.first_name,
-                        lead.last_name,
-                        lead.website || '',
-                        '',
-                        perm.email,
-                        perm.pattern || ''
-                    ].join(','));
-                });
+        // Filter leads based on export filter
+        const leadsToExport = filteredLeads.filter(lead => {
+            if (!lead.email_validity) return false;
+            
+            switch (exportFilter) {
+                case 'valid':
+                    return lead.email_validity === 'ok';
+                case 'valid+catchall':
+                    return lead.email_validity === 'ok' || lead.email_validity === 'mb';
+                case 'catchall':
+                    return lead.email_validity === 'mb';
+                case 'all':
+                    return true;
+                default:
+                    return false;
             }
+        });
+
+        leadsToExport.forEach(lead => {
+            const rowData: string[] = [];
+            if (exportColumns.firstName) rowData.push(escapeCSV(lead.first_name || ''));
+            if (exportColumns.lastName) rowData.push(escapeCSV(lead.last_name || ''));
+            if (exportColumns.middleName) rowData.push(escapeCSV(lead.middle_name || ''));
+            if (exportColumns.fullName) {
+                const nameParts = [lead.first_name, lead.middle_name, lead.last_name].filter(Boolean);
+                rowData.push(escapeCSV(nameParts.join(' ')));
+            }
+            if (exportColumns.companyName) rowData.push(escapeCSV(lead.company_name || ''));
+            if (exportColumns.companyWebsite) rowData.push(escapeCSV(lead.website || ''));
+            if (exportColumns.linkedinUrl) rowData.push(escapeCSV(lead.company_linkedin || ''));
+            if (exportColumns.contactEmail) rowData.push(escapeCSV(lead.email || ''));
+            if (exportColumns.title) rowData.push(escapeCSV(lead.title || ''));
+            if (exportColumns.industry) rowData.push(escapeCSV(lead.industry || ''));
+            if (exportColumns.location) rowData.push(escapeCSV(lead.location || ''));
+            
+            rows.push(rowData.join(','));
         });
 
         const csvContent = [headers.join(','), ...rows].join('\n');
@@ -502,8 +588,9 @@ export default function LeadsPage() {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `leads-filtered-${new Date().toISOString().split('T')[0]}.csv`;
+        a.download = `leads-${exportFilter}-${new Date().toISOString().split('T')[0]}.csv`;
         a.click();
+        setShowExportSettings(false);
     }
 
     return (
@@ -536,11 +623,11 @@ export default function LeadsPage() {
 
                             <div className="flex items-center gap-3">
                                 <button
-                                    onClick={downloadCSV}
+                                    onClick={() => setShowExportSettings(true)}
                                     className="flex items-center gap-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg font-medium text-sm transition-all shadow-sm"
                                 >
                                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" x2="12" y1="15" y2="3" /></svg>
-                                    Export
+                                    Export ({validCount + catchallCount})
                                 </button>
                             </div>
                         </div>
@@ -633,7 +720,7 @@ export default function LeadsPage() {
                                         <th className="px-4 py-4 w-12">
                                             <input
                                                 type="checkbox"
-                                                checked={filteredLeads.length > 0 && selectedIds.size === filteredLeads.length}
+                                                checked={paginatedLeads.length > 0 && paginatedLeads.every(l => selectedIds.has(l.id))}
                                                 onChange={toggleSelectAll}
                                                 className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                                             />
@@ -699,10 +786,10 @@ export default function LeadsPage() {
                                                 <td className="px-6 py-4"><div className="h-4 bg-gray-200 rounded w-16"></div></td>
                                             </tr>
                                         ))
-                                    ) : filteredLeads.length === 0 ? (
+                                    ) : paginatedLeads.length === 0 ? (
                                         <tr><td colSpan={7} className="px-6 py-12 text-center text-gray-500">No leads found matching filters.</td></tr>
                                     ) : (
-                                        filteredLeads.map((lead) => (
+                                        paginatedLeads.map((lead) => (
                                             <tr 
                                                 key={lead.id} 
                                                 className={`hover:bg-gray-50/80 transition-colors group ${selectedIds.has(lead.id) ? 'bg-blue-50/50' : ''}`}
@@ -831,8 +918,257 @@ export default function LeadsPage() {
                             </table>
                         </div>
                     </div>
+
+                    {/* Pagination */}
+                    {totalPages > 1 && (
+                        <div className="flex items-center justify-between mt-6 bg-white rounded-xl shadow-sm border border-gray-200 px-6 py-4">
+                            <div className="text-sm text-gray-600">
+                                Showing <span className="font-medium">{((currentPage - 1) * LEADS_PER_PAGE) + 1}</span> to{' '}
+                                <span className="font-medium">{Math.min(currentPage * LEADS_PER_PAGE, filteredLeads.length)}</span> of{' '}
+                                <span className="font-medium">{filteredLeads.length}</span> leads
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => setCurrentPage(1)}
+                                    disabled={currentPage === 1}
+                                    className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    title="First page"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/></svg>
+                                </button>
+                                <button
+                                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                    disabled={currentPage === 1}
+                                    className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    title="Previous page"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                                </button>
+                                
+                                <div className="flex items-center gap-1">
+                                    {/* Page numbers */}
+                                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                                        let pageNum: number;
+                                        if (totalPages <= 5) {
+                                            pageNum = i + 1;
+                                        } else if (currentPage <= 3) {
+                                            pageNum = i + 1;
+                                        } else if (currentPage >= totalPages - 2) {
+                                            pageNum = totalPages - 4 + i;
+                                        } else {
+                                            pageNum = currentPage - 2 + i;
+                                        }
+                                        return (
+                                            <button
+                                                key={pageNum}
+                                                onClick={() => setCurrentPage(pageNum)}
+                                                className={`w-10 h-10 rounded-lg text-sm font-medium transition-colors ${
+                                                    currentPage === pageNum
+                                                        ? 'bg-blue-600 text-white'
+                                                        : 'hover:bg-gray-100 text-gray-700'
+                                                }`}
+                                            >
+                                                {pageNum}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+
+                                <button
+                                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                    disabled={currentPage === totalPages}
+                                    className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    title="Next page"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                                </button>
+                                <button
+                                    onClick={() => setCurrentPage(totalPages)}
+                                    disabled={currentPage === totalPages}
+                                    className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    title="Last page"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
+
+            {/* Export Settings Modal */}
+            {showExportSettings && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-md w-full">
+                        <div className="p-6 border-b border-gray-200">
+                            <div className="flex justify-between items-center">
+                                <div>
+                                    <h2 className="text-xl font-bold text-gray-900">Export Settings</h2>
+                                    <p className="text-sm text-gray-500 mt-1">Choose columns and filter for CSV export</p>
+                                </div>
+                                <button onClick={() => setShowExportSettings(false)} className="text-gray-400 hover:text-gray-600">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="p-6 space-y-6 max-h-[60vh] overflow-y-auto">
+                            {/* Email Filter */}
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-2">Email Filter</label>
+                                <select 
+                                    value={exportFilter} 
+                                    onChange={(e) => setExportFilter(e.target.value)} 
+                                    className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                                >
+                                    <option value="valid">Valid Only ({validCount})</option>
+                                    <option value="valid+catchall">Valid + Catchall ({validCount + catchallCount})</option>
+                                    <option value="catchall">Catchall Only ({catchallCount})</option>
+                                    <option value="all">All Leads ({filteredLeads.length})</option>
+                                </select>
+                            </div>
+
+                            {/* Column Selection */}
+                            <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-3">Columns to Export</label>
+                                <div className="space-y-3">
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={exportColumns.firstName}
+                                            onChange={(e) => setExportColumns(prev => ({ ...prev, firstName: e.target.checked }))}
+                                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">First Name</span>
+                                    </label>
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={exportColumns.lastName}
+                                            onChange={(e) => setExportColumns(prev => ({ ...prev, lastName: e.target.checked }))}
+                                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">Last Name</span>
+                                    </label>
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={exportColumns.middleName}
+                                            onChange={(e) => setExportColumns(prev => ({ ...prev, middleName: e.target.checked }))}
+                                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">Middle Name</span>
+                                    </label>
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={exportColumns.fullName}
+                                            onChange={(e) => setExportColumns(prev => ({ ...prev, fullName: e.target.checked }))}
+                                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">Full Name</span>
+                                    </label>
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={exportColumns.contactEmail}
+                                            onChange={(e) => setExportColumns(prev => ({ ...prev, contactEmail: e.target.checked }))}
+                                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">Contact Email</span>
+                                    </label>
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={exportColumns.title}
+                                            onChange={(e) => setExportColumns(prev => ({ ...prev, title: e.target.checked }))}
+                                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">Job Title</span>
+                                    </label>
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={exportColumns.companyName}
+                                            onChange={(e) => setExportColumns(prev => ({ ...prev, companyName: e.target.checked }))}
+                                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">Company Name</span>
+                                    </label>
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={exportColumns.companyWebsite}
+                                            onChange={(e) => setExportColumns(prev => ({ ...prev, companyWebsite: e.target.checked }))}
+                                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">Company Website</span>
+                                    </label>
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={exportColumns.linkedinUrl}
+                                            onChange={(e) => setExportColumns(prev => ({ ...prev, linkedinUrl: e.target.checked }))}
+                                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">LinkedIn URL</span>
+                                    </label>
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={exportColumns.industry}
+                                            onChange={(e) => setExportColumns(prev => ({ ...prev, industry: e.target.checked }))}
+                                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">Industry</span>
+                                    </label>
+                                    <label className="flex items-center gap-3 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={exportColumns.location}
+                                            onChange={(e) => setExportColumns(prev => ({ ...prev, location: e.target.checked }))}
+                                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm text-gray-700">Location</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            {/* Preview count */}
+                            <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                <p className="text-sm text-gray-600">
+                                    <span className="font-medium">
+                                        {exportFilter === 'valid' ? validCount : 
+                                         exportFilter === 'catchall' ? catchallCount : 
+                                         exportFilter === 'all' ? filteredLeads.length :
+                                         validCount + catchallCount}
+                                    </span> leads will be exported with{' '}
+                                    <span className="font-medium">
+                                        {Object.values(exportColumns).filter(Boolean).length}
+                                    </span> columns
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
+                            <button
+                                onClick={() => setShowExportSettings(false)}
+                                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm font-medium"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={downloadCSV}
+                                disabled={Object.values(exportColumns).filter(Boolean).length === 0}
+                                className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" x2="12" y1="15" y2="3" /></svg>
+                                Download CSV
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

@@ -32,10 +32,10 @@
  */
 
 import { ScrapedLead, ScrapeError, ScraperMode } from './scraper-types';
-import { scrapeApollo as scrapeApolloLocal } from './scraper-local';
-import { scrapeApollo as scrapeApolloDolphin } from './scraper-dolphin';
-import { scrapeApollo as scrapeApolloGoLogin } from './scraper-gologin';
 import { BrowserManagerLocal } from './browser-manager-local';
+
+// Use dynamic imports to avoid loading unnecessary modules and their side effects
+// This prevents the Dolphin client from being initialized when using GoLogin mode
 
 // Re-export types for backward compatibility
 // This allows existing code to continue using: import { ScrapedLead } from '@/lib/scraper'
@@ -93,10 +93,11 @@ async function checkForConflicts(mode: ScraperMode): Promise<{ hasConflict: bool
 
 /**
  * Get the appropriate scraper function based on current mode
+ * Uses dynamic imports to avoid loading unnecessary modules
  * 
  * @returns The scraper function for the configured mode
  */
-export function getScraper(): ScraperFunctionWithUser {
+export async function getScraper(): Promise<ScraperFunctionWithUser> {
     const mode = getScraperMode();
     console.log(`[SCRAPER-FACTORY] Using scraper mode: ${mode}`);
     
@@ -111,6 +112,7 @@ export function getScraper(): ScraperFunctionWithUser {
                 );
             }
             // Note: GOLOGIN_PROFILE_ID is now optional (can use database assignments)
+            const { scrapeApollo: scrapeApolloGoLogin } = await import('./scraper-gologin');
             return scrapeApolloGoLogin;
             
         case 'dolphin':
@@ -123,12 +125,14 @@ export function getScraper(): ScraperFunctionWithUser {
                 );
             }
             // Dolphin scraper doesn't support userId, wrap it
+            const { scrapeApollo: scrapeApolloDolphin } = await import('./scraper-dolphin');
             return (url: string, pages?: number, _userId?: string) => 
                 scrapeApolloDolphin(url, pages);
             
         case 'local':
         default:
             // Local scraper doesn't support userId, wrap it
+            const { scrapeApollo: scrapeApolloLocal } = await import('./scraper-local');
             return (url: string, pages?: number, _userId?: string) => 
                 scrapeApolloLocal(url, pages);
     }
@@ -175,8 +179,8 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
     console.log(`[SCRAPER-FACTORY] User ID: ${userId || '(none)'}`);
     console.log(`[SCRAPER-FACTORY] ========================================`);
     
-    // Get and execute the appropriate scraper
-    const scraper = getScraper();
+    // Get and execute the appropriate scraper (using dynamic import)
+    const scraper = await getScraper();
     return scraper(url, pages, userId);
 }
 

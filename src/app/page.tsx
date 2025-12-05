@@ -68,30 +68,54 @@ function WireframeGlobe() {
     }
     
     // Draw longitude lines (meridians) - these rotate!
-    const meridianCount = 18;
+    // Draw 12 full meridian circles (each circle has front and back half)
+    const meridianCount = 12;
     const rotation = rotationRef.current;
     
     for (let i = 0; i < meridianCount; i++) {
+      // Space meridians evenly around 180 degrees (they form complete circles)
       const baseLon = (i * 180) / meridianCount;
       const lon = (baseLon + rotation) % 360;
       const lonRad = lon * (Math.PI / 180);
       
-      // Calculate the apparent width of the ellipse based on longitude
-      const apparentWidth = radius * Math.sin(lonRad);
+      // Draw the full meridian circle (both front and back visible)
+      const segments = 72;
       
-      // Determine if this meridian is on the front or back of the globe
-      const isBack = Math.cos(lonRad) < 0;
-      
-      ctx.strokeStyle = isBack 
-        ? 'rgba(255, 255, 255, 0.15)' 
-        : `rgba(255, 255, 255, ${0.4 + Math.abs(Math.sin(lonRad)) * 0.4})`;
-      
+      // Draw back half first (lower opacity for depth)
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
       ctx.beginPath();
-      
-      // Draw meridian as points along the line from pole to pole
-      const segments = 60;
       for (let j = 0; j <= segments; j++) {
-        const lat = (j / segments) * Math.PI - Math.PI / 2; // -90 to 90 degrees
+        const lat = (j / segments) * Math.PI - Math.PI / 2;
+        
+        // 3D coordinates on sphere (back side - negative z)
+        const x3d = radius * Math.cos(lat) * Math.sin(lonRad + Math.PI);
+        const y3d = radius * Math.sin(lat);
+        const z3d = radius * Math.cos(lat) * Math.cos(lonRad + Math.PI);
+        
+        // Apply tilt rotation around X axis
+        const y3dTilted = y3d * Math.cos(tiltAngle) - z3d * Math.sin(tiltAngle);
+        const z3dTilted = y3d * Math.sin(tiltAngle) + z3d * Math.cos(tiltAngle);
+        
+        // Only draw if on back side (z < 0 after tilt)
+        if (z3dTilted < 0) {
+          const x2d = cx + x3d;
+          const y2d = cy - y3dTilted;
+          
+          if (j === 0 || ctx.isPointInPath(x2d, y2d) === false) {
+            ctx.moveTo(x2d, y2d);
+          } else {
+            ctx.lineTo(x2d, y2d);
+          }
+        }
+      }
+      ctx.stroke();
+      
+      // Draw front half (higher opacity)
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.5 + Math.abs(Math.sin(lonRad)) * 0.3})`;
+      ctx.beginPath();
+      let lastDrawn = false;
+      for (let j = 0; j <= segments; j++) {
+        const lat = (j / segments) * Math.PI - Math.PI / 2;
         
         // 3D coordinates on sphere
         const x3d = radius * Math.cos(lat) * Math.sin(lonRad);
@@ -102,14 +126,50 @@ function WireframeGlobe() {
         const y3dTilted = y3d * Math.cos(tiltAngle) - z3d * Math.sin(tiltAngle);
         const z3dTilted = y3d * Math.sin(tiltAngle) + z3d * Math.cos(tiltAngle);
         
-        // Project to 2D (orthographic)
         const x2d = cx + x3d;
         const y2d = cy - y3dTilted;
         
-        if (j === 0) {
-          ctx.moveTo(x2d, y2d);
+        // Draw if on front side (z >= 0 after tilt)
+        if (z3dTilted >= 0) {
+          if (!lastDrawn) {
+            ctx.moveTo(x2d, y2d);
+          } else {
+            ctx.lineTo(x2d, y2d);
+          }
+          lastDrawn = true;
         } else {
-          ctx.lineTo(x2d, y2d);
+          lastDrawn = false;
+        }
+      }
+      ctx.stroke();
+      
+      // Draw back half of this meridian
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+      ctx.beginPath();
+      lastDrawn = false;
+      for (let j = 0; j <= segments; j++) {
+        const lat = (j / segments) * Math.PI - Math.PI / 2;
+        
+        const x3d = radius * Math.cos(lat) * Math.sin(lonRad);
+        const y3d = radius * Math.sin(lat);
+        const z3d = radius * Math.cos(lat) * Math.cos(lonRad);
+        
+        const y3dTilted = y3d * Math.cos(tiltAngle) - z3d * Math.sin(tiltAngle);
+        const z3dTilted = y3d * Math.sin(tiltAngle) + z3d * Math.cos(tiltAngle);
+        
+        const x2d = cx + x3d;
+        const y2d = cy - y3dTilted;
+        
+        // Draw if on back side (z < 0 after tilt)
+        if (z3dTilted < 0) {
+          if (!lastDrawn) {
+            ctx.moveTo(x2d, y2d);
+          } else {
+            ctx.lineTo(x2d, y2d);
+          }
+          lastDrawn = true;
+        } else {
+          lastDrawn = false;
         }
       }
       ctx.stroke();
@@ -256,8 +316,7 @@ export default function LandingPage() {
           <span className="text-white">[Redacted]</span>&apos;s database contains over{' '}
           <span className="text-zinc-400">210M contacts</span>,{' '}
           <span className="text-zinc-400">144M phone numbers</span>, and{' '}
-          <span className="text-zinc-400">35M global companies</span>.{' '}
-          Find and Enrich With Your Own Custom-Built Scraper.
+          <span className="text-zinc-400">35M global companies</span>.
         </h1>
 
         {/* Subheadline */}
@@ -267,7 +326,7 @@ export default function LandingPage() {
           }`}
           style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
         >
-          Custom Built For You
+          Find and Enrich With Your Own Custom-Built Scraper.
         </p>
 
         {/* Features Section */}
@@ -352,19 +411,17 @@ export default function LandingPage() {
               <p className="text-zinc-400">
                 Thank you for your interest. We&apos;ll review your request and get back to you shortly.
               </p>
-              {formData.wantsImmediateStart && process.env.NEXT_PUBLIC_TELEGRAM_LINK && (
-                <p className="text-zinc-400 mt-4">
-                  Want to chat now? Join our{' '}
-                  <a
-                    href={process.env.NEXT_PUBLIC_TELEGRAM_LINK}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-white hover:text-zinc-300 underline"
-                  >
-                    Telegram group
-                  </a>
-                </p>
-              )}
+              <a
+                href="https://t.me/Atlasscraper"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 mt-6 px-6 py-3 bg-[#0088cc] hover:bg-[#0077b5] text-white font-semibold rounded-xl transition-all"
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.161c-.18 1.897-.962 6.502-1.359 8.627-.168.9-.5 1.201-.82 1.23-.697.064-1.226-.461-1.901-.903-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.479.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.244-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.831-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635.099-.002.321.023.465.141.121.099.154.232.17.325.015.094.034.31.019.476z"/>
+                </svg>
+                Talk To Us Now
+              </a>
             </div>
           ) : (
             <form
