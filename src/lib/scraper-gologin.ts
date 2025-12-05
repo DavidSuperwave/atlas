@@ -39,6 +39,7 @@ interface ExtractionDiagnostics {
     successfulExtractions: number;
     sampleData: string[];
     errors: string[];
+    domainMethods: { [key: string]: number }; // Track which method found domains
 }
 
 async function getProfileForScrape(userId?: string): Promise<ProfileLookupResult> {
@@ -73,7 +74,8 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
             skippedNoDomain: 0,
             successfulExtractions: 0,
             sampleData: [],
-            errors: []
+            errors: [],
+            domainMethods: {}
         };
 
         // Helper to extract domain from URL
@@ -137,45 +139,192 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
 
                 // ========================================
                 // STEP 2: Find DOMAIN (REQUIRED)
-                // Apollo's website link has aria-label="website link"
-                // The URL is in data-href or href attribute
+                // Apollo's website link is in the "COMPANY · LINKS" column
+                // Try multiple methods to find the company domain
                 // ========================================
                 let domain = '';
+                let domainMethod = '';
                 
-                // METHOD 1: Look for Apollo's website link button
-                const websiteLink = row.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
-                if (websiteLink) {
-                    const href = websiteLink.getAttribute('data-href') || websiteLink.href || '';
-                    if (href) {
-                        domain = extractDomain(href);
+                // METHOD 1: Look for Apollo's website link (icon-based)
+                // Apollo uses: <a aria-label="website link" href="..." data-href="...">
+                //              <i class="apollo-icon-link">
+                const websiteSelectors = [
+                    // Primary: Apollo's exact aria-label pattern
+                    'a[aria-label="website link"]',
+                    // Apollo icon class pattern
+                    'a:has(i.apollo-icon-link)',
+                    'a:has(.apollo-icon-link)',
+                    // Fallback aria-label variations
+                    'a[aria-label*="website"]',
+                    'a[aria-label*="Website"]',
+                    'a[aria-label="company website"]',
+                    // Apollo's current link classes (from inspection)
+                    'a.zp_sEcm8.zp_NbJqo',
+                    'a.zp_sEcm8[data-href]',
+                    // Data attribute patterns
+                    'a[data-cy="website-link"]',
+                    '[data-cy="company-website"] a',
+                ];
+                
+                for (const selector of websiteSelectors) {
+                    if (domain) break;
+                    try {
+                        const websiteLinks = row.querySelectorAll(selector) as NodeListOf<HTMLAnchorElement>;
+                        for (const websiteLink of websiteLinks) {
+                            // Get URL from data-href first (Apollo's preferred), then href
+                            const href = websiteLink.getAttribute('data-href') || 
+                                        websiteLink.getAttribute('href') || 
+                                        websiteLink.href || '';
+                            // Skip if it's a social link
+                            if (!href || 
+                                href.includes('apollo.io') || 
+                                href.includes('linkedin.com') ||
+                                href.includes('facebook.com') ||
+                                href.includes('twitter.com')) {
+                                continue;
+                            }
+                            domain = extractDomain(href);
+                            if (domain) {
+                                domainMethod = `selector:${selector}`;
+                                break;
+                            }
+                        }
+                    } catch { /* :has() selector may not be supported in older browsers */ }
+                }
+                
+                // METHOD 2: Look in the COMPANY LINKS column (gridcell with aria-colindex around 13)
+                // Apollo structure: div[role="gridcell"] > div > div > div > span > div > a[aria-label="website link"]
+                if (!domain) {
+                    const cells = row.querySelectorAll('[role="gridcell"], [role="cell"], td');
+                    for (const cell of cells) {
+                        // First try to find the website link specifically by aria-label
+                        const websiteLink = cell.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
+                        if (websiteLink) {
+                            const href = websiteLink.getAttribute('data-href') || websiteLink.getAttribute('href') || websiteLink.href || '';
+                            if (href && !href.includes('apollo.io') && !href.includes('linkedin.com')) {
+                                domain = extractDomain(href);
+                                if (domain) {
+                                    domainMethod = 'gridcell-website-link';
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // Then look for any anchor that's not social/internal
+                        if (!domain) {
+                            const links = cell.querySelectorAll('a[href], a[data-href]') as NodeListOf<HTMLAnchorElement>;
+                            for (const link of links) {
+                                const ariaLabel = link.getAttribute('aria-label') || '';
+                                // Skip known social links by aria-label
+                                if (ariaLabel.includes('linkedin') || 
+                                    ariaLabel.includes('facebook') || 
+                                    ariaLabel.includes('twitter')) {
+                                    continue;
+                                }
+                                
+                                const href = link.getAttribute('data-href') || link.getAttribute('href') || link.href || '';
+                                // Skip internal/social links
+                                if (!href ||
+                                    href.includes('apollo.io') ||
+                                    href.includes('linkedin.com') ||
+                                    href.includes('twitter.com') ||
+                                    href.includes('facebook.com') ||
+                                    href.includes('tel:') ||
+                                    href.includes('mailto:') ||
+                                    href.startsWith('#') ||
+                                    href.startsWith('javascript:')) {
+                                    continue;
+                                }
+                                const extracted = extractDomain(href);
+                                if (extracted && extracted.includes('.') && !extracted.includes('apollo')) {
+                                    domain = extracted;
+                                    domainMethod = 'gridcell-any-link';
+                                    break;
+                                }
+                            }
+                        }
+                        if (domain) break;
                     }
                 }
                 
-                // METHOD 2: Look for any external link
+                // METHOD 3: Look for domain text displayed as plain text (e.g., "company.com")
                 if (!domain) {
-                    const allLinks = row.querySelectorAll('a[href]') as NodeListOf<HTMLAnchorElement>;
-                    for (const link of allLinks) {
-                        const href = link.getAttribute('data-href') || link.href || '';
-                        if (!href ||
-                            href.includes('apollo.io') ||
-                            href.includes('linkedin.com') ||
-                            href.includes('twitter.com') ||
-                            href.includes('facebook.com') ||
-                            href.includes('tel:') ||
-                            href.includes('mailto:')) {
-                            continue;
-                        }
-                        const extracted = extractDomain(href);
-                        if (extracted && extracted.includes('.')) {
-                            domain = extracted;
+                    const cells = row.querySelectorAll('[role="cell"], [role="gridcell"], td');
+                    for (const cell of cells) {
+                        const text = cell.textContent?.trim() || '';
+                        // Match domain patterns like "example.com" or "sub.example.co.uk"
+                        const domainMatch = text.match(/^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/);
+                        if (domainMatch && !text.includes('apollo.io') && !text.includes('linkedin.com')) {
+                            domain = text.replace(/^www\./, '');
+                            domainMethod = 'text-pattern';
                             break;
                         }
                     }
                 }
+                
+                // METHOD 4: Look for data-href or data-url on any clickable element
+                if (!domain) {
+                    const elementsWithData = row.querySelectorAll('[data-href], [data-url], [data-website], [data-link]');
+                    for (const el of elementsWithData) {
+                        const href = el.getAttribute('data-href') || 
+                                    el.getAttribute('data-url') || 
+                                    el.getAttribute('data-website') ||
+                                    el.getAttribute('data-link') || '';
+                        if (href && !href.includes('apollo.io') && !href.includes('linkedin.com')) {
+                            const extracted = extractDomain(href);
+                            if (extracted && extracted.includes('.')) {
+                                domain = extracted;
+                                domainMethod = 'data-attribute';
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // METHOD 5: Look for any clickable element (button/div) with website URL in attributes
+                if (!domain) {
+                    const clickables = row.querySelectorAll('button, div[role="button"], [tabindex="0"]');
+                    for (const el of clickables) {
+                        // Check various attributes that might contain URL
+                        const attrs = ['data-href', 'data-url', 'data-website', 'data-link', 'data-value'];
+                        for (const attr of attrs) {
+                            const val = el.getAttribute(attr) || '';
+                            if (val && val.includes('.') && !val.includes('apollo.io') && !val.includes('linkedin.com')) {
+                                const extracted = extractDomain(val);
+                                if (extracted && extracted.includes('.')) {
+                                    domain = extracted;
+                                    domainMethod = 'clickable-element';
+                                    break;
+                                }
+                            }
+                        }
+                        if (domain) break;
+                    }
+                }
 
                 if (!domain) {
+                    // Debug: log what links were found in this row
+                    const debugLinks: string[] = [];
+                    const allRowLinks = row.querySelectorAll('a[href], a[data-href]') as NodeListOf<HTMLAnchorElement>;
+                    allRowLinks.forEach(link => {
+                        const href = link.getAttribute('data-href') || link.getAttribute('href') || '';
+                        const label = link.getAttribute('aria-label') || '';
+                        if (href) {
+                            debugLinks.push(`[${label || 'no-label'}]: ${href.substring(0, 50)}`);
+                        }
+                    });
+                    if (debugLinks.length > 0 && diagnostics.errors.length < 5) {
+                        diagnostics.errors.push(`Row ${rowIndex} (${name}) - Links found but no domain: ${debugLinks.join(', ')}`);
+                    } else if (debugLinks.length === 0 && diagnostics.errors.length < 5) {
+                        diagnostics.errors.push(`Row ${rowIndex} (${name}) - No links found in row at all`);
+                    }
                     diagnostics.skippedNoDomain++;
                     continue;
+                }
+                
+                // Track which method found this domain
+                if (domainMethod) {
+                    diagnostics.domainMethods[domainMethod] = (diagnostics.domainMethods[domainMethod] || 0) + 1;
                 }
 
                 // ========================================
@@ -366,6 +515,12 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
             console.log(`[GOLOGIN-SCRAPER] Skipped (no name): ${diagnostics.skippedNoName}`);
             console.log(`[GOLOGIN-SCRAPER] Skipped (no domain): ${diagnostics.skippedNoDomain}`);
             console.log(`[GOLOGIN-SCRAPER] Extracted: ${diagnostics.successfulExtractions}`);
+            if (Object.keys(diagnostics.domainMethods).length > 0) {
+                console.log(`[GOLOGIN-SCRAPER] Domain extraction methods used:`);
+                for (const [method, count] of Object.entries(diagnostics.domainMethods)) {
+                    console.log(`[GOLOGIN-SCRAPER]   ${method}: ${count}`);
+                }
+            }
             if (diagnostics.sampleData.length > 0) {
                 console.log(`[GOLOGIN-SCRAPER] Samples:`);
                 diagnostics.sampleData.forEach(s => console.log(`[GOLOGIN-SCRAPER]   ${s}`));
@@ -384,7 +539,7 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
                 const nextBtn = await page.$('button[aria-label="Next"]') ||
                                await page.$('button[aria-label="next"]');
                 if (nextBtn) {
-                    const isDisabled = await page.evaluate(el => el.hasAttribute('disabled'), nextBtn);
+                    const isDisabled = await page.evaluate((el: Element) => el.hasAttribute('disabled'), nextBtn);
                     if (!isDisabled) {
                         const delay = Math.floor(Math.random() * 6000) + 5000;
                         console.log(`[GOLOGIN-SCRAPER] Waiting ${delay}ms...`);
