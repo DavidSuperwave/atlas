@@ -29,7 +29,7 @@
 
 import { getBrowserForProfile } from './browser-manager-gologin';
 import { getUserProfileId, ProfileLookupResult } from './gologin-profile-manager';
-import { Page } from 'puppeteer';
+import { Page, ElementHandle } from 'puppeteer';
 import type { ScrapedLead, ScrapeError } from './scraper-types';
 
 // Re-export types for convenience
@@ -377,10 +377,28 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
 
             // Pagination with delays for anti-detection (5-11 seconds as requested)
             if (currentPage < pages) {
-                // Find next button
-                const nextBtn = await page.$('button[aria-label="Next"]') ||
-                               await page.$('button[aria-label="next"]') ||
-                               await page.$('[data-cy="pagination-next"]');
+                // Try multiple selectors for next button (more robust)
+                const nextSelectors = [
+                    'button[aria-label="Next"]',
+                    'button[aria-label="next"]',
+                    '[data-cy="pagination-next"]',
+                    'button:has-text("Next")',
+                    'button[aria-label*="Next" i]', // Case-insensitive
+                    '[aria-label*="next" i]' // More flexible
+                ];
+                
+                let nextBtn: ElementHandle | null = null;
+                for (const selector of nextSelectors) {
+                    try {
+                        nextBtn = await page.$(selector);
+                        if (nextBtn) {
+                            console.log(`[GOLOGIN-SCRAPER] Found next button with selector: ${selector}`);
+                            break;
+                        }
+                    } catch {
+                        continue;
+                    }
+                }
                 
                 if (nextBtn) {
                     const isDisabled = await page.evaluate(el => el.hasAttribute('disabled'), nextBtn);

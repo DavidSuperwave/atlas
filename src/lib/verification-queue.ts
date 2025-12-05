@@ -132,6 +132,12 @@ export class VerificationQueue {
      * Add item to queue
      */
     add(item: QueueItem) {
+        // Ensure workers are initialized
+        if (!this.isInitialized) {
+            console.warn('[VERIFICATION-QUEUE] Workers not initialized, reinitializing...');
+            this.initializeWorkers();
+        }
+
         // Add with priority (optional)
         if (item.priority !== undefined) {
             // Insert in priority order
@@ -146,13 +152,15 @@ export class VerificationQueue {
         }
 
         if (item.type === 'lead') {
-            console.log(`[VERIFICATION-QUEUE] Added lead ${item.leadId} with ${item.permutations?.length || 0} permutations (Queue: ${this.queue.length})`);
+            console.log(`[VERIFICATION-QUEUE] Added lead ${item.leadId} with ${item.permutations?.length || 0} permutations (Queue: ${this.queue.length}, Workers: ${this.workers.length})`);
         } else {
-            console.log(`[VERIFICATION-QUEUE] Added bulk job ${item.jobId} with ${item.emails?.length || 0} emails (Queue: ${this.queue.length})`);
+            console.log(`[VERIFICATION-QUEUE] Added bulk job ${item.jobId} with ${item.emails?.length || 0} emails (Queue: ${this.queue.length}, Workers: ${this.workers.length})`);
         }
 
         // Start processing if not already running
-        this.startProcessing();
+        this.startProcessing().catch(error => {
+            console.error('[VERIFICATION-QUEUE] Error starting processing:', error);
+        });
     }
 
     /**
@@ -161,14 +169,49 @@ export class VerificationQueue {
     private async startProcessing(): Promise<void> {
         if (this.workers.length === 0) {
             console.error('[VERIFICATION-QUEUE] No workers available!');
+            console.error('[VERIFICATION-QUEUE] Check API key configuration.');
+            console.error('[VERIFICATION-QUEUE] Key pool has keys:', this.keyPool.getKeyCount());
+            console.error('[VERIFICATION-QUEUE] Legacy key available:', !!this.legacyApiKey);
+            
+            // Try to reinitialize workers
+            console.log('[VERIFICATION-QUEUE] Attempting to reinitialize workers...');
+            this.initializeWorkers();
+            
+            if (this.workers.length === 0) {
+                console.error('[VERIFICATION-QUEUE] Still no workers after reinitialization. Cannot process queue.');
+                return;
+            }
+        }
+
+        if (this.queue.length === 0) {
+            console.log('[VERIFICATION-QUEUE] Queue is empty, nothing to process');
             return;
         }
 
-        // Find idle workers and start them
+        console.log(`[VERIFICATION-QUEUE] Starting processing: ${this.queue.length} items in queue, ${this.workers.length} workers available`);
+
+        // Find idle workers and start them (fire-and-forget but with error handling)
+        let workersStarted = 0;
         for (const worker of this.workers) {
             if (!worker.isProcessing && this.queue.length > 0) {
-                this.processWithWorker(worker);
+                workersStarted++;
+                // Start processing in background - don't await to allow parallel processing
+                this.processWithWorker(worker).catch(error => {
+                    console.error(`[VERIFICATION-QUEUE] Worker ${worker.id} processing error:`, error);
+                    worker.isProcessing = false; // Reset flag on error
+                    // Try to continue processing if queue still has items
+                    if (this.queue.length > 0) {
+                        console.log(`[VERIFICATION-QUEUE] Retrying processing after worker ${worker.id} error...`);
+                        setTimeout(() => this.startProcessing(), 1000);
+                    }
+                });
             }
+        }
+
+        if (workersStarted === 0 && this.queue.length > 0) {
+            console.warn(`[VERIFICATION-QUEUE] No idle workers available but queue has ${this.queue.length} items. All workers may be busy.`);
+        } else {
+            console.log(`[VERIFICATION-QUEUE] Started ${workersStarted} worker(s) for processing`);
         }
     }
 

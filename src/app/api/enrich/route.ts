@@ -55,6 +55,8 @@ export async function POST(request: Request) {
 }
 
 async function enrichScrape(scrapeId: string, userId: string, currentCredits: number, request: Request) {
+    console.log(`[ENRICH] Starting enrichment for scrape ${scrapeId}, user ${userId}, credits: ${currentCredits}`);
+    
     // Query all leads for this scrape that haven't been enriched yet
     const { data: leads, error } = await supabase
         .from('leads')
@@ -63,9 +65,11 @@ async function enrichScrape(scrapeId: string, userId: string, currentCredits: nu
         .is('email_validity', null);
 
     if (error) {
-        console.error('Error fetching leads:', error);
+        console.error('[ENRICH] Error fetching leads:', error);
         return corsJsonResponse({ error: 'Failed to fetch leads' }, request, { status: 500 });
     }
+
+    console.log(`[ENRICH] Found ${leads?.length || 0} leads to enrich`);
 
     if (!leads || leads.length === 0) {
         return corsJsonResponse({ success: true, message: 'No unprocessed leads found', count: 0 }, request);
@@ -136,6 +140,7 @@ async function enrichScrape(scrapeId: string, userId: string, currentCredits: nu
             .eq('id', lead.id);
 
         // Add to verification queue with userId for credit deduction
+        console.log(`[ENRICH] Adding lead ${lead.id} to verification queue with ${permutations.length} permutations`);
         verificationQueue.add({
             type: 'lead',
             leadId: lead.id,
@@ -144,15 +149,19 @@ async function enrichScrape(scrapeId: string, userId: string, currentCredits: nu
         });
 
         queuedCount++;
-        console.log(`Queued lead ${lead.id} with ${permutations.length} permutations for user ${userId}`);
+        console.log(`[ENRICH] Queued lead ${lead.id} with ${permutations.length} permutations for user ${userId}`);
     }
 
+    console.log(`[ENRICH] Enrichment complete: ${queuedCount} queued, ${skippedCount} skipped`);
+    console.log(`[ENRICH] Verification queue status: ${verificationQueue.getQueueSize()} items in queue`);
+    
     return corsJsonResponse({
         success: true,
         message: `Enrichment started for ${queuedCount} leads`,
         count: queuedCount,
         skipped: skippedCount,
-        credits_available: currentCredits
+        credits_available: currentCredits,
+        queue_size: verificationQueue.getQueueSize()
     }, request);
 }
 

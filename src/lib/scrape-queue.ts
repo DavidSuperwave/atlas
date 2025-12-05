@@ -401,8 +401,12 @@ class ScrapeQueue {
                 .update({ status: 'running' })
                 .eq('id', nextItem.scrape_id);
 
-            // Extract pages from URL or default to 1
-            const pages = 1; // Could parse from filters if needed
+            // Extract pages from filters or default to 1
+            const pages = (scrapeDetails.filters && typeof scrapeDetails.filters === 'object' && 'pages' in scrapeDetails.filters)
+                ? Number(scrapeDetails.filters.pages) || 1
+                : 1;
+
+            console.log(`[SCRAPE-QUEUE] Scraping ${pages} page(s) for URL: ${scrapeDetails.url}`);
 
             // Run the scraper (lazy load to avoid module issues)
             console.log(`[SCRAPE-QUEUE] Starting scraper for URL: ${scrapeDetails.url}`);
