@@ -140,37 +140,62 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                 // ========================================
                 // STEP 2: Find DOMAIN (REQUIRED)
                 // Apollo's website link is in the "Company · Links" column
-                // Column has: aria-colindex="13", data-id="account.social"
-                // We MUST find the link with aria-label="website link" - NOT social links
+                // The link has: aria-label="website link" and data-href="http://..."
+                // We need to find it by position (13th gridcell) or by searching all cells
                 // ========================================
                 let domain = '';
                 let domainMethod = '';
                 
-                // METHOD 1: Find the "Company · Links" column specifically by aria-colindex="13"
-                // This is the most reliable method - target the exact column
-                const companyLinksCell = row.querySelector('[aria-colindex="13"]') || 
-                                         row.querySelector('[data-id="account.social"]');
-                if (companyLinksCell) {
-                    // Look for the website link in this specific cell
-                    const websiteLink = companyLinksCell.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
-                    if (websiteLink) {
-                        const href = websiteLink.getAttribute('data-href') || 
-                                    websiteLink.getAttribute('href') || 
-                                    websiteLink.href || '';
-                        if (href && 
-                            !href.includes('apollo.io') && 
-                            !href.includes('linkedin.com') &&
-                            !href.includes('facebook.com') &&
-                            !href.includes('twitter.com')) {
-                            domain = extractDomain(href);
-                            if (domain) {
-                                domainMethod = 'company-links-col-13';
+                // METHOD 1: Find column by position - get all gridcells and find the 13th one (index 12)
+                // Apollo's Company Links column is typically at position 13
+                const allGridCells = row.querySelectorAll('[role="gridcell"]');
+                if (allGridCells.length >= 13) {
+                    // Try index 12 (13th cell, 0-indexed)
+                    const companyLinksCell = allGridCells[12];
+                    if (companyLinksCell) {
+                        const websiteLink = companyLinksCell.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
+                        if (websiteLink) {
+                            const href = websiteLink.getAttribute('data-href') || 
+                                        websiteLink.getAttribute('href') || 
+                                        websiteLink.href || '';
+                            if (href && 
+                                !href.includes('apollo.io') && 
+                                !href.includes('linkedin.com') &&
+                                !href.includes('facebook.com') &&
+                                !href.includes('twitter.com')) {
+                                domain = extractDomain(href);
+                                if (domain) {
+                                    domainMethod = 'gridcell-position-13';
+                                }
                             }
                         }
                     }
                 }
                 
-                // METHOD 2: Direct search for website link anywhere in row
+                // METHOD 2: Find column by aria-colindex="13" attribute
+                if (!domain) {
+                    const col13Cell = row.querySelector('[aria-colindex="13"]');
+                    if (col13Cell) {
+                        const websiteLink = col13Cell.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
+                        if (websiteLink) {
+                            const href = websiteLink.getAttribute('data-href') || 
+                                        websiteLink.getAttribute('href') || 
+                                        websiteLink.href || '';
+                            if (href && 
+                                !href.includes('apollo.io') && 
+                                !href.includes('linkedin.com') &&
+                                !href.includes('facebook.com') &&
+                                !href.includes('twitter.com')) {
+                                domain = extractDomain(href);
+                                if (domain) {
+                                    domainMethod = 'aria-colindex-13';
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // METHOD 3: Direct search for website link anywhere in row
                 if (!domain) {
                     const websiteLink = row.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
                     if (websiteLink) {
@@ -184,20 +209,21 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                             !href.includes('twitter.com')) {
                             domain = extractDomain(href);
                             if (domain) {
-                                domainMethod = 'aria-label-website-link';
+                                domainMethod = 'row-website-link';
                             }
                         }
                     }
                 }
                 
-                // METHOD 3: Look in cells that contain social links (indicates it's the links column)
+                // METHOD 4: Find cell with COMPANY LinkedIn links (linkedin.com/company)
+                // These indicate the Company Links column
                 if (!domain) {
-                    const cells = row.querySelectorAll('[role="gridcell"], [role="cell"], td');
+                    const cells = row.querySelectorAll('[role="gridcell"]');
                     for (const cell of cells) {
-                        // Check if this cell has any social links (indicates it's the Company Links column)
-                        const hasSocialLinks = cell.querySelector('a[aria-label="linkedin link"], a[aria-label="facebook link"], a[aria-label="twitter link"]');
-                        if (hasSocialLinks) {
-                            // This is the Company Links column - look for website link
+                        // Look for company LinkedIn link (not personal /in/ links)
+                        const companyLinkedin = cell.querySelector('a[href*="linkedin.com/company"], a[data-href*="linkedin.com/company"]');
+                        if (companyLinkedin) {
+                            // Found Company Links column - now get website link
                             const websiteLinkInCell = cell.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
                             if (websiteLinkInCell) {
                                 const href = websiteLinkInCell.getAttribute('data-href') || 
@@ -210,7 +236,7 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                                     !href.includes('twitter.com')) {
                                     domain = extractDomain(href);
                                     if (domain) {
-                                        domainMethod = 'company-links-cell';
+                                        domainMethod = 'company-linkedin-cell';
                                         break;
                                     }
                                 }
@@ -219,10 +245,11 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                     }
                 }
                 
-                // METHOD 4: Search all cells for website link
+                // METHOD 5: Search ALL cells for website link
                 if (!domain) {
-                    const cells = row.querySelectorAll('[role="gridcell"], [role="cell"], td');
-                    for (const cell of cells) {
+                    const cells = row.querySelectorAll('[role="gridcell"]');
+                    for (let i = 0; i < cells.length; i++) {
+                        const cell = cells[i];
                         const websiteLinkInCell = cell.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
                         if (websiteLinkInCell) {
                             const href = websiteLinkInCell.getAttribute('data-href') || 
@@ -235,7 +262,7 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                                 !href.includes('twitter.com')) {
                                 domain = extractDomain(href);
                                 if (domain) {
-                                    domainMethod = 'cell-website-link';
+                                    domainMethod = `cell-${i}-website-link`;
                                     break;
                                 }
                             }
@@ -243,14 +270,13 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                     }
                 }
                 
-                // METHOD 5: Look for data-href with website URLs (not social)
+                // METHOD 6: Look for any a[data-href] with website aria-label
                 if (!domain) {
-                    const elementsWithHref = row.querySelectorAll('a[data-href]') as NodeListOf<HTMLAnchorElement>;
-                    for (const el of elementsWithHref) {
-                        const ariaLabel = el.getAttribute('aria-label') || '';
-                        // Only accept website links, skip social
+                    const allLinksWithDataHref = row.querySelectorAll('a[data-href]') as NodeListOf<HTMLAnchorElement>;
+                    for (const link of allLinksWithDataHref) {
+                        const ariaLabel = link.getAttribute('aria-label') || '';
                         if (ariaLabel === 'website link') {
-                            const href = el.getAttribute('data-href') || '';
+                            const href = link.getAttribute('data-href') || '';
                             if (href && 
                                 !href.includes('apollo.io') && 
                                 !href.includes('linkedin.com') &&
@@ -258,7 +284,7 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                                 !href.includes('twitter.com')) {
                                 domain = extractDomain(href);
                                 if (domain) {
-                                    domainMethod = 'data-href-website';
+                                    domainMethod = 'data-href-scan';
                                     break;
                                 }
                             }
@@ -267,36 +293,60 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                 }
 
                 if (!domain) {
-                    // Debug: log what's in the Company Links column (col 13)
+                    // Debug: detailed logging to find why domain wasn't extracted
                     const debugInfo: string[] = [];
                     
-                    // Check column 13 specifically
+                    // Count total gridcells in row
+                    const allCells = row.querySelectorAll('[role="gridcell"]');
+                    debugInfo.push(`cells:${allCells.length}`);
+                    
+                    // Check if cell at position 12 (13th cell) exists and has links
+                    if (allCells.length >= 13) {
+                        const cell12 = allCells[12];
+                        const linksInCell12 = cell12.querySelectorAll('a');
+                        const websiteLinkInCell12 = cell12.querySelector('a[aria-label="website link"]');
+                        debugInfo.push(`cell12:${linksInCell12.length}links`);
+                        if (websiteLinkInCell12) {
+                            const href = (websiteLinkInCell12 as HTMLAnchorElement).getAttribute('data-href');
+                            debugInfo.push(`cell12-website:${href?.substring(0, 30) || 'no-href'}`);
+                        }
+                    } else {
+                        debugInfo.push(`cell12:not-enough-cells`);
+                    }
+                    
+                    // Check aria-colindex="13" cell
                     const col13 = row.querySelector('[aria-colindex="13"]');
                     if (col13) {
-                        const col13Links = col13.querySelectorAll('a') as NodeListOf<HTMLAnchorElement>;
-                        col13Links.forEach(link => {
-                            const href = link.getAttribute('data-href') || link.getAttribute('href') || '';
-                            const label = link.getAttribute('aria-label') || '';
-                            if (href) {
-                                debugInfo.push(`col13:[${label || 'no-label'}]:${href.substring(0, 40)}`);
-                            }
-                        });
-                        if (col13Links.length === 0) {
-                            debugInfo.push('col13:no-links');
+                        const linksInCol13 = col13.querySelectorAll('a');
+                        const websiteLinkInCol13 = col13.querySelector('a[aria-label="website link"]');
+                        debugInfo.push(`col13:${linksInCol13.length}links`);
+                        if (websiteLinkInCol13) {
+                            const href = (websiteLinkInCol13 as HTMLAnchorElement).getAttribute('data-href');
+                            debugInfo.push(`col13-website:${href?.substring(0, 30) || 'no-href'}`);
                         }
                     } else {
                         debugInfo.push('col13:not-found');
                     }
                     
-                    // Also log all links in row for comparison
-                    const allRowLinks = row.querySelectorAll('a[aria-label]') as NodeListOf<HTMLAnchorElement>;
-                    allRowLinks.forEach(link => {
-                        const href = link.getAttribute('data-href') || link.getAttribute('href') || '';
+                    // Search entire row for website link
+                    const websiteLinkInRow = row.querySelector('a[aria-label="website link"]');
+                    if (websiteLinkInRow) {
+                        const href = (websiteLinkInRow as HTMLAnchorElement).getAttribute('data-href');
+                        debugInfo.push(`row-website:${href?.substring(0, 30) || 'no-href'}`);
+                    } else {
+                        debugInfo.push('row:no-website-link');
+                    }
+                    
+                    // Count all labeled links in row
+                    const allLabeledLinks = row.querySelectorAll('a[aria-label]');
+                    const labelCounts: string[] = [];
+                    allLabeledLinks.forEach(link => {
                         const label = link.getAttribute('aria-label') || '';
-                        if (href && label) {
-                            debugInfo.push(`[${label}]:${href.substring(0, 30)}`);
-                        }
+                        if (label) labelCounts.push(label.split(' ')[0]);
                     });
+                    if (labelCounts.length > 0) {
+                        debugInfo.push(`labels:[${labelCounts.join(',')}]`);
+                    }
                     
                     if (diagnostics.errors.length < 5) {
                         diagnostics.errors.push(`Row ${rowIndex} (${name}) - ${debugInfo.join(', ')}`);
