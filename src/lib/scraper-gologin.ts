@@ -203,7 +203,7 @@ async function extractAllLeadsFromPage(page: Page): Promise<RawLeadData[]> {
                 
                 // Get all cells in the row
                 const cells = row.querySelectorAll('[role="cell"], [role="gridcell"]');
-                if (cells.length < 8) {
+                if (cells.length < 13) {
                     console.log(`[EXTRACT] Row ${rowIndex}: Only ${cells.length} cells, skipping`);
                     return;
                 }
