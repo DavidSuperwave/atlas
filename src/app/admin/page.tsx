@@ -281,7 +281,21 @@ export default function AdminDashboardPage() {
                 </div>
 
                 {/* Invite Management Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                    <Link href="/admin/scrapes" className="bg-white rounded-xl border border-gray-200 p-6 hover:border-blue-300 hover:shadow-md transition-all">
+                        <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-lg bg-blue-100 flex items-center justify-center">
+                                <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                            </div>
+                            <div>
+                                <p className="text-lg font-semibold text-gray-900">Scrapes</p>
+                                <p className="text-sm text-gray-500">Monitor and manage scrape operations</p>
+                            </div>
+                        </div>
+                    </Link>
+
                     <Link href="/admin/access-requests" className="bg-white rounded-xl border border-gray-200 p-6 hover:border-amber-300 hover:shadow-md transition-all">
                         <div className="flex items-center gap-4">
                             <div className="w-12 h-12 rounded-lg bg-amber-100 flex items-center justify-center">
