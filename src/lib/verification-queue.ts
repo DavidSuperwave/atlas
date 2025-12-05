@@ -27,6 +27,8 @@ interface QueueItem {
     emails?: string[]; // For bulk verification
     userId?: string; // User ID for credit deduction
     priority?: number; // Higher = processed first
+    onComplete?: () => void; // Callback when processing is done
+    onError?: (error: any) => void; // Callback when processing fails
 }
 
 interface PermutationResult {
@@ -82,7 +84,7 @@ export class VerificationQueue {
      */
     private initializeWorkers(): void {
         const keyCount = this.keyPool.getKeyCount();
-        
+
         if (keyCount === 0) {
             // Fall back to legacy single-key mode
             if (this.legacyApiKey) {
@@ -102,7 +104,7 @@ export class VerificationQueue {
         } else {
             // Multi-key mode: create one worker per key
             console.log(`[VERIFICATION-QUEUE] Initializing ${keyCount} workers for parallel processing`);
-            
+
             const keyNames = this.keyPool.getKeyNames();
             this.workers = keyNames.slice(0, MAX_CONCURRENT_WORKERS).map((name, index) => ({
                 id: index,
@@ -115,7 +117,7 @@ export class VerificationQueue {
         }
 
         this.isInitialized = true;
-        
+
         // Log capacity
         const capacity = this.keyPool.getTotalCapacity();
         console.log(`[VERIFICATION-QUEUE] Capacity: ${capacity.requestsPerMinute} emails/minute, ${capacity.requestsPerHour} emails/hour`);
@@ -131,12 +133,24 @@ export class VerificationQueue {
     /**
      * Add item to queue
      */
-    add(item: QueueItem) {
+    /**
+     * Add item to queue
+     * @param item Queue item to add
+     * @param waitForCompletion If true, returns a promise that resolves when processing is complete
+     */
+    async add(item: QueueItem, waitForCompletion = false): Promise<void> {
         // Ensure workers are initialized
         if (!this.isInitialized) {
             console.warn('[VERIFICATION-QUEUE] Workers not initialized, reinitializing...');
             this.initializeWorkers();
         }
+
+        const promise = new Promise<void>((resolve, reject) => {
+            if (waitForCompletion) {
+                item.onComplete = resolve;
+                item.onError = reject;
+            }
+        });
 
         // Add with priority (optional)
         if (item.priority !== undefined) {
@@ -161,6 +175,10 @@ export class VerificationQueue {
         this.startProcessing().catch(error => {
             console.error('[VERIFICATION-QUEUE] Error starting processing:', error);
         });
+
+        if (waitForCompletion) {
+            return promise;
+        }
     }
 
     /**
@@ -172,11 +190,11 @@ export class VerificationQueue {
             console.error('[VERIFICATION-QUEUE] Check API key configuration.');
             console.error('[VERIFICATION-QUEUE] Key pool has keys:', this.keyPool.getKeyCount());
             console.error('[VERIFICATION-QUEUE] Legacy key available:', !!this.legacyApiKey);
-            
+
             // Try to reinitialize workers
             console.log('[VERIFICATION-QUEUE] Attempting to reinitialize workers...');
             this.initializeWorkers();
-            
+
             if (this.workers.length === 0) {
                 console.error('[VERIFICATION-QUEUE] Still no workers after reinitialization. Cannot process queue.');
                 return;
@@ -220,7 +238,7 @@ export class VerificationQueue {
      */
     private async processWithWorker(worker: WorkerState): Promise<void> {
         if (worker.isProcessing) return;
-        
+
         worker.isProcessing = true;
 
         try {
@@ -249,6 +267,7 @@ export class VerificationQueue {
                         await this.processBulkJobWithWorker(item, worker);
                     }
                     worker.processedCount++;
+                    item.onComplete?.();
                 } catch (error) {
                     if (item.type === 'lead') {
                         console.error(`[WORKER-${worker.id}] Error processing lead ${item.leadId}:`, error);
@@ -257,6 +276,7 @@ export class VerificationQueue {
                         console.error(`[WORKER-${worker.id}] Error processing bulk job ${item.jobId}:`, error);
                         await this.updateBulkJobWithError(item.jobId!, error);
                     }
+                    item.onError?.(error);
                 } finally {
                     // Release the API key
                     this.keyPool.releaseKey(worker.apiKey);
@@ -316,7 +336,7 @@ export class VerificationQueue {
 
             try {
                 const result = await enrichLead(perm.email, worker.apiKey);
-                
+
                 // Track usage
                 this.keyPool.trackUsage(worker.apiKey);
                 worker.lastRequestTime = Date.now();
@@ -351,7 +371,7 @@ export class VerificationQueue {
                 const errorMessage = e instanceof Error ? e.message : 'Unknown error';
                 console.error(`[WORKER-${worker.id}] Verification failed for ${perm.email}:`, errorMessage);
                 errors.push(`${perm.email}: ${errorMessage}`);
-                
+
                 checkedPerms.push({
                     email: perm.email,
                     pattern: perm.pattern,
@@ -428,7 +448,7 @@ export class VerificationQueue {
             console.error(`[WORKER-${worker.id}] Error updating lead in DB:`, error);
         } else {
             console.log(`[WORKER-${worker.id}] Lead ${item.leadId} updated: ${bestStatus} (${checkedPerms.length} checked)`);
-            
+
             // EMAIL-BASED DUPLICATE DETECTION
             // Only check for duplicates when email is VALID (not catchall/invalid)
             // No point checking invalid emails - they're not usable anyway
@@ -492,7 +512,7 @@ export class VerificationQueue {
     private async processBulkJobWithWorker(item: QueueItem, worker: WorkerState): Promise<void> {
         const jobId = item.jobId!;
         const userId = item.userId!;
-        
+
         console.log(`[WORKER-${worker.id}] Processing bulk job ${jobId}...`);
 
         if (!worker.apiKey) {
@@ -525,15 +545,15 @@ export class VerificationQueue {
 
                 try {
                     const verificationResult = await enrichLead(result.email, worker.apiKey);
-                    
+
                     // Track usage
                     this.keyPool.trackUsage(worker.apiKey);
-                    
+
                     let status = 'invalid';
                     if (verificationResult.code === 'ok') {
                         status = 'valid';
-                    } else if (verificationResult.code === 'mb' || 
-                               verificationResult.message?.toLowerCase().includes('catch')) {
+                    } else if (verificationResult.code === 'mb' ||
+                        verificationResult.message?.toLowerCase().includes('catch')) {
                         status = 'catchall';
                     }
 
@@ -562,7 +582,7 @@ export class VerificationQueue {
 
                 } catch (verifyError) {
                     console.error(`[WORKER-${worker.id}] Error verifying ${result.email}:`, verifyError);
-                    
+
                     await supabase
                         .from('email_verification_results')
                         .update({
@@ -576,7 +596,7 @@ export class VerificationQueue {
 
             await supabase
                 .from('email_verification_jobs')
-                .update({ 
+                .update({
                     status: 'completed',
                     credits_used: creditsUsed,
                     completed_at: new Date().toISOString(),
@@ -596,7 +616,7 @@ export class VerificationQueue {
 
     private async updateLeadWithError(leadId: string, error: unknown) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        
+
         await supabase
             .from('leads')
             .update({
@@ -611,7 +631,7 @@ export class VerificationQueue {
 
     private async updateBulkJobWithError(jobId: string, error: unknown) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        
+
         await supabase
             .from('email_verification_jobs')
             .update({
@@ -682,13 +702,13 @@ export class VerificationQueue {
         const queueSize = this.queue.length;
         const totalPendingEmails = this.getTotalPendingEmails();
         const activeWorkers = this.workers.filter(w => w.isProcessing).length;
-        
+
         // Estimate time based on parallel processing
         const effectiveWorkers = Math.max(1, activeWorkers || this.workers.length);
         const estimatedTimeSeconds = Math.ceil(
             (totalPendingEmails * RATE_LIMIT_DELAY) / (1000 * effectiveWorkers)
         );
-        
+
         let estimatedTimeFormatted = '';
         if (estimatedTimeSeconds < 60) {
             estimatedTimeFormatted = `${estimatedTimeSeconds}s`;

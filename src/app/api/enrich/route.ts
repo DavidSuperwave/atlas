@@ -35,7 +35,7 @@ export async function POST(request: Request) {
         }
 
         const body = await request.json();
-        
+
         // Support bulk scrape enrichment, single lead with custom permutations, or single lead auto-generate
         if (body.scrapeId) {
             return await enrichScrape(body.scrapeId, user.id, profile.credits_balance, request);
@@ -56,7 +56,7 @@ export async function POST(request: Request) {
 
 async function enrichScrape(scrapeId: string, userId: string, currentCredits: number, request: Request) {
     console.log(`[ENRICH] Starting enrichment for scrape ${scrapeId}, user ${userId}, credits: ${currentCredits}`);
-    
+
     // Query all leads for this scrape that haven't been enriched yet
     const { data: leads, error } = await supabase
         .from('leads')
@@ -78,7 +78,7 @@ async function enrichScrape(scrapeId: string, userId: string, currentCredits: nu
     // Check if user has enough credits for at least one lead
     // Credits are deducted on successful enrichment, so we just need at least 1 credit
     if (currentCredits < 1) {
-        return corsJsonResponse({ 
+        return corsJsonResponse({
             error: 'Insufficient credits. Please top up your account.',
             credits_required: leads.length,
             credits_available: currentCredits
@@ -133,7 +133,7 @@ async function enrichScrape(scrapeId: string, userId: string, currentCredits: nu
         // Set status to processing and associate with user
         await supabase
             .from('leads')
-            .update({ 
+            .update({
                 verification_status: 'processing',
                 user_id: userId
             })
@@ -154,7 +154,7 @@ async function enrichScrape(scrapeId: string, userId: string, currentCredits: nu
 
     console.log(`[ENRICH] Enrichment complete: ${queuedCount} queued, ${skippedCount} skipped`);
     console.log(`[ENRICH] Verification queue status: ${verificationQueue.getQueueSize()} items in queue`);
-    
+
     return corsJsonResponse({
         success: true,
         message: `Enrichment started for ${queuedCount} leads`,
@@ -167,7 +167,7 @@ async function enrichScrape(scrapeId: string, userId: string, currentCredits: nu
 
 // Enrich with custom permutations (from edit modal)
 async function enrichWithCustomPermutations(
-    leadId: string, 
+    leadId: string,
     permutations: { email: string; pattern: string }[],
     userId: string,
     currentCredits: number,
@@ -179,7 +179,7 @@ async function enrichWithCustomPermutations(
 
     // Check credits - need at least 1 for potential success
     if (currentCredits < 1) {
-        return corsJsonResponse({ 
+        return corsJsonResponse({
             error: 'Insufficient credits. Please top up your account.',
             credits_required: 1,
             credits_available: currentCredits
@@ -195,7 +195,7 @@ async function enrichWithCustomPermutations(
     // Clear previous verification data and set status to processing
     await supabase
         .from('leads')
-        .update({ 
+        .update({
             verification_status: 'processing',
             user_id: userId,
             email: null,
@@ -207,19 +207,20 @@ async function enrichWithCustomPermutations(
         })
         .eq('id', leadId);
 
-    // Add to verification queue with userId
-    verificationQueue.add({
+    // Add to verification queue with userId and wait for completion
+    // This ensures the serverless function doesn't exit before processing is done
+    await verificationQueue.add({
         type: 'lead',
         leadId,
         permutations: validPermutations,
         userId
-    });
+    }, true);
 
     console.log(`Queued lead ${leadId} with ${validPermutations.length} custom permutations for user ${userId}`);
 
-    return corsJsonResponse({ 
-        success: true, 
-        message: 'Enrichment queued with custom permutations', 
+    return corsJsonResponse({
+        success: true,
+        message: 'Enrichment queued with custom permutations',
         count: validPermutations.length,
         credits_available: currentCredits
     }, request);
@@ -229,7 +230,7 @@ async function enrichWithCustomPermutations(
 async function enrichSingleLeadAuto(leadId: string, userId: string, currentCredits: number, request: Request) {
     // Check credits first
     if (currentCredits < 1) {
-        return corsJsonResponse({ 
+        return corsJsonResponse({
             error: 'Insufficient credits. Please top up your account.',
             credits_required: 1,
             credits_available: currentCredits
@@ -270,7 +271,7 @@ async function enrichSingleLeadAuto(leadId: string, userId: string, currentCredi
     // Clear previous verification data and set status to processing
     await supabase
         .from('leads')
-        .update({ 
+        .update({
             verification_status: 'processing',
             user_id: userId,
             email: null,
@@ -282,19 +283,19 @@ async function enrichSingleLeadAuto(leadId: string, userId: string, currentCredi
         })
         .eq('id', leadId);
 
-    // Add to queue with userId
-    verificationQueue.add({
+    // Add to queue with userId and wait for completion
+    await verificationQueue.add({
         type: 'lead',
         leadId,
         permutations,
         userId
-    });
+    }, true);
 
     console.log(`Queued lead ${leadId} with ${permutations.length} auto-generated permutations for user ${userId}`);
 
-    return corsJsonResponse({ 
-        success: true, 
-        message: 'Enrichment queued', 
+    return corsJsonResponse({
+        success: true,
+        message: 'Enrichment queued',
         count: permutations.length,
         credits_available: currentCredits
     }, request);
