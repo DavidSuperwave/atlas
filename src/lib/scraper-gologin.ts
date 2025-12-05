@@ -139,111 +139,107 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
 
                 // ========================================
                 // STEP 2: Find DOMAIN (REQUIRED)
-                // Apollo's website link is in the "COMPANY · LINKS" column
-                // Try multiple methods to find the company domain
+                // Apollo's website link is in the "Company · Links" column
+                // We MUST find the link with aria-label="website link" - NOT social links
                 // ========================================
                 let domain = '';
                 let domainMethod = '';
                 
-                // METHOD 1: Look for Apollo's website link (icon-based)
-                // Apollo uses: <a aria-label="website link" href="..." data-href="...">
-                //              <i class="apollo-icon-link">
-                const websiteSelectors = [
-                    // Primary: Apollo's exact aria-label pattern
-                    'a[aria-label="website link"]',
-                    // Apollo icon class pattern
-                    'a:has(i.apollo-icon-link)',
-                    'a:has(.apollo-icon-link)',
-                    // Fallback aria-label variations
-                    'a[aria-label*="website"]',
-                    'a[aria-label*="Website"]',
-                    'a[aria-label="company website"]',
-                    // Apollo's current link classes (from inspection)
-                    'a.zp_sEcm8.zp_NbJqo',
-                    'a.zp_sEcm8[data-href]',
-                    // Data attribute patterns
-                    'a[data-cy="website-link"]',
-                    '[data-cy="company-website"] a',
-                ];
-                
-                for (const selector of websiteSelectors) {
-                    if (domain) break;
-                    try {
-                        const websiteLinks = row.querySelectorAll(selector) as NodeListOf<HTMLAnchorElement>;
-                        for (const websiteLink of websiteLinks) {
-                            // Get URL from data-href first (Apollo's preferred), then href
-                            const href = websiteLink.getAttribute('data-href') || 
-                                        websiteLink.getAttribute('href') || 
-                                        websiteLink.href || '';
-                            // Skip if it's a social link
-                            if (!href || 
-                                href.includes('apollo.io') || 
-                                href.includes('linkedin.com') ||
-                                href.includes('facebook.com') ||
-                                href.includes('twitter.com')) {
-                                continue;
-                            }
-                            domain = extractDomain(href);
-                            if (domain) {
-                                domainMethod = `selector:${selector}`;
-                                break;
-                            }
+                // METHOD 1: Direct search for website link by aria-label (MOST RELIABLE)
+                // Apollo structure: <a aria-label="website link" data-href="http://www.envyusmedia.com" ...>
+                // We MUST use data-href first (Apollo's preferred), then fall back to href
+                // This is the ONLY link we want - ignore LinkedIn, Facebook, Twitter
+                const websiteLink = row.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
+                if (websiteLink) {
+                    // Apollo stores the actual domain URL in data-href attribute
+                    // Priority: data-href > href > element.href
+                    const href = websiteLink.getAttribute('data-href') || 
+                                websiteLink.getAttribute('href') || 
+                                websiteLink.href || '';
+                    if (href && 
+                        !href.includes('apollo.io') && 
+                        !href.includes('linkedin.com') &&
+                        !href.includes('facebook.com') &&
+                        !href.includes('twitter.com')) {
+                        domain = extractDomain(href);
+                        if (domain) {
+                            domainMethod = 'aria-label-website-link';
                         }
-                    } catch { /* :has() selector may not be supported in older browsers */ }
+                    }
                 }
                 
-                // METHOD 2: Look in the COMPANY LINKS column (gridcell with aria-colindex around 13)
-                // Apollo structure: div[role="gridcell"] > div > div > div > span > div > a[aria-label="website link"]
+                // METHOD 2: Find the "Company · Links" column and look in that cell
+                // Find the column header first, then get the same column in the data row
+                if (!domain) {
+                    // Find all cells in this row
+                    const cells = row.querySelectorAll('[role="gridcell"], [role="cell"], td');
+                    
+                    // Try to find the cell that contains "Company · Links" text (header cell)
+                    // Then find the corresponding data cell in this row
+                    for (const cell of cells) {
+                        // Check if this cell contains the Company Links column
+                        // Look for span with "Company · Links" text or check if it contains website links
+                        const hasCompanyLinksText = cell.textContent?.includes('Company · Links') || 
+                                                    cell.querySelector('span.zp_w5TOt');
+                        
+                        // Or check if this cell contains multiple social links (indicates it's the links column)
+                        const linksInCell = cell.querySelectorAll('a[aria-label]') as NodeListOf<HTMLAnchorElement>;
+                        const hasMultipleSocialLinks = Array.from(linksInCell).some(link => {
+                            const label = link.getAttribute('aria-label') || '';
+                            return label.includes('linkedin') || label.includes('facebook') || label.includes('twitter');
+                        });
+                        
+                        if (hasCompanyLinksText || hasMultipleSocialLinks) {
+                            // This is likely the Company Links column - find the website link in it
+                            // Apollo stores domain in data-href: <a aria-label="website link" data-href="http://www.envyusmedia.com">
+                            const websiteLinkInCell = cell.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
+                            if (websiteLinkInCell) {
+                                // Priority: data-href (Apollo's preferred) > href > element.href
+                                const href = websiteLinkInCell.getAttribute('data-href') || 
+                                            websiteLinkInCell.getAttribute('href') || 
+                                            websiteLinkInCell.href || '';
+                                if (href && 
+                                    !href.includes('apollo.io') && 
+                                    !href.includes('linkedin.com') &&
+                                    !href.includes('facebook.com') &&
+                                    !href.includes('twitter.com')) {
+                                    domain = extractDomain(href);
+                                    if (domain) {
+                                        domainMethod = 'company-links-column';
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // METHOD 3: Look in all cells, but ONLY accept links with aria-label="website link"
+                // This is a fallback that explicitly rejects social links
+                // Apollo structure: <a aria-label="website link" data-href="http://www.envyusmedia.com">
                 if (!domain) {
                     const cells = row.querySelectorAll('[role="gridcell"], [role="cell"], td');
                     for (const cell of cells) {
-                        // First try to find the website link specifically by aria-label
-                        const websiteLink = cell.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
-                        if (websiteLink) {
-                            const href = websiteLink.getAttribute('data-href') || websiteLink.getAttribute('href') || websiteLink.href || '';
-                            if (href && !href.includes('apollo.io') && !href.includes('linkedin.com')) {
+                        // ONLY look for the website link - ignore all other links
+                        const websiteLinkInCell = cell.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
+                        if (websiteLinkInCell) {
+                            // Priority: data-href (Apollo's preferred) > href > element.href
+                            const href = websiteLinkInCell.getAttribute('data-href') || 
+                                        websiteLinkInCell.getAttribute('href') || 
+                                        websiteLinkInCell.href || '';
+                            // Double-check it's not a social link (shouldn't be, but be safe)
+                            if (href && 
+                                !href.includes('apollo.io') && 
+                                !href.includes('linkedin.com') &&
+                                !href.includes('facebook.com') &&
+                                !href.includes('twitter.com')) {
                                 domain = extractDomain(href);
                                 if (domain) {
-                                    domainMethod = 'gridcell-website-link';
+                                    domainMethod = 'cell-website-link-fallback';
                                     break;
                                 }
                             }
                         }
-                        
-                        // Then look for any anchor that's not social/internal
-                        if (!domain) {
-                            const links = cell.querySelectorAll('a[href], a[data-href]') as NodeListOf<HTMLAnchorElement>;
-                            for (const link of links) {
-                                const ariaLabel = link.getAttribute('aria-label') || '';
-                                // Skip known social links by aria-label
-                                if (ariaLabel.includes('linkedin') || 
-                                    ariaLabel.includes('facebook') || 
-                                    ariaLabel.includes('twitter')) {
-                                    continue;
-                                }
-                                
-                                const href = link.getAttribute('data-href') || link.getAttribute('href') || link.href || '';
-                                // Skip internal/social links
-                                if (!href ||
-                                    href.includes('apollo.io') ||
-                                    href.includes('linkedin.com') ||
-                                    href.includes('twitter.com') ||
-                                    href.includes('facebook.com') ||
-                                    href.includes('tel:') ||
-                                    href.includes('mailto:') ||
-                                    href.startsWith('#') ||
-                                    href.startsWith('javascript:')) {
-                                    continue;
-                                }
-                                const extracted = extractDomain(href);
-                                if (extracted && extracted.includes('.') && !extracted.includes('apollo')) {
-                                    domain = extracted;
-                                    domainMethod = 'gridcell-any-link';
-                                    break;
-                                }
-                            }
-                        }
-                        if (domain) break;
                     }
                 }
                 
@@ -262,15 +258,28 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                     }
                 }
                 
-                // METHOD 4: Look for data-href or data-url on any clickable element
+                // METHOD 4: Look for data-href on elements, but ONLY if they're website links
+                // Skip any element that has social link aria-labels
                 if (!domain) {
-                    const elementsWithData = row.querySelectorAll('[data-href], [data-url], [data-website], [data-link]');
+                    const elementsWithData = row.querySelectorAll('[data-href], [data-url], [data-website]');
                     for (const el of elementsWithData) {
+                        // Skip if this is a social link (check aria-label)
+                        const ariaLabel = el.getAttribute('aria-label') || '';
+                        if (ariaLabel.includes('linkedin') || 
+                            ariaLabel.includes('facebook') || 
+                            ariaLabel.includes('twitter')) {
+                            continue;
+                        }
+                        
                         const href = el.getAttribute('data-href') || 
                                     el.getAttribute('data-url') || 
-                                    el.getAttribute('data-website') ||
-                                    el.getAttribute('data-link') || '';
-                        if (href && !href.includes('apollo.io') && !href.includes('linkedin.com')) {
+                                    el.getAttribute('data-website') || '';
+                        // Explicitly reject social links
+                        if (href && 
+                            !href.includes('apollo.io') && 
+                            !href.includes('linkedin.com') &&
+                            !href.includes('facebook.com') &&
+                            !href.includes('twitter.com')) {
                             const extracted = extractDomain(href);
                             if (extracted && extracted.includes('.')) {
                                 domain = extracted;
@@ -278,27 +287,6 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                                 break;
                             }
                         }
-                    }
-                }
-                
-                // METHOD 5: Look for any clickable element (button/div) with website URL in attributes
-                if (!domain) {
-                    const clickables = row.querySelectorAll('button, div[role="button"], [tabindex="0"]');
-                    for (const el of clickables) {
-                        // Check various attributes that might contain URL
-                        const attrs = ['data-href', 'data-url', 'data-website', 'data-link', 'data-value'];
-                        for (const attr of attrs) {
-                            const val = el.getAttribute(attr) || '';
-                            if (val && val.includes('.') && !val.includes('apollo.io') && !val.includes('linkedin.com')) {
-                                const extracted = extractDomain(val);
-                                if (extracted && extracted.includes('.')) {
-                                    domain = extracted;
-                                    domainMethod = 'clickable-element';
-                                    break;
-                                }
-                            }
-                        }
-                        if (domain) break;
                     }
                 }
 
