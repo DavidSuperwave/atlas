@@ -44,7 +44,7 @@ export async function middleware(request: NextRequest) {
     );
 
     // API routes that don't require auth
-    const publicApiRoutes = ['/api/auth', '/api/access-requests', '/api/onboarding'];
+    const publicApiRoutes = ['/api/auth', '/api/access-requests', '/api/onboarding', '/api/admin/invites/validate'];
     const isPublicApiRoute = publicApiRoutes.some(route => pathname.startsWith(route));
 
     // Redirect /signup to landing page (invite-only system)

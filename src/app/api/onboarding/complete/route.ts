@@ -138,17 +138,38 @@ export async function POST(request: Request) {
             campaignId: campaignId,
         } : null;
 
-        // Log the credit plan request if provided
+        // Create credit transaction record for the initial 1000 credits (always given)
+        await supabase
+            .from('credit_transactions')
+            .insert({
+                user_id: authData.user.id,
+                amount: 1000,
+                type: 'topup',
+                description: 'Welcome bonus - Onboarding',
+            });
+
+        // Create credit order if a plan was selected
         if (creditsPlan) {
-            // Create a credit transaction record for the initial 1000 credits
-            await supabase
-                .from('credit_transactions')
-                .insert({
-                    user_id: authData.user.id,
-                    amount: 1000,
-                    type: 'topup',
-                    description: 'Welcome bonus - Onboarding',
-                });
+            // Map plan IDs to plan names and credit amounts
+            const planMapping: Record<string, { name: string; credits: number }> = {
+                starter: { name: 'Starter', credits: 5000 },
+                pro: { name: 'Pro', credits: 25000 },
+                enterprise: { name: 'Enterprise', credits: 0 }, // 0 represents unlimited
+            };
+
+            const plan = planMapping[creditsPlan];
+            if (plan) {
+                // Create a credit order for admin review
+                await supabase
+                    .from('credit_orders')
+                    .insert({
+                        user_id: authData.user.id,
+                        email: invite.email,
+                        credits_amount: plan.credits,
+                        plan_name: plan.name,
+                        status: 'pending',
+                    });
+            }
         }
 
         return NextResponse.json({

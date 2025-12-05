@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 
-const REDACTED_WORDS = ['Redacted', 'Private', 'Secure', 'Exclusive'];
 
 // Rotating Wireframe Globe Component with true 3D rotation effect
 function WireframeGlobe() {
@@ -159,9 +158,8 @@ function WireframeGlobe() {
 export default function LandingPage() {
   const [showForm, setShowForm] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [redactedText, setRedactedText] = useState('');
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [wordIndex, setWordIndex] = useState(0);
+  const [headlineRedacted, setHeadlineRedacted] = useState('');
+  const [headlineTypingComplete, setHeadlineTypingComplete] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -177,33 +175,21 @@ export default function LandingPage() {
     setMounted(true);
   }, []);
 
-  // Typing animation for "Redacted"
+  // Typing animation for "[Redacted]" in headline - only on load
   useEffect(() => {
-    const currentWord = REDACTED_WORDS[wordIndex];
+    if (!mounted || headlineTypingComplete) return;
     
-    if (!isDeleting && redactedText === currentWord) {
-      // Finished typing, wait then start deleting
-      const timeout = setTimeout(() => setIsDeleting(true), 2000);
+    const targetText = '[Redacted]';
+    
+    if (headlineRedacted.length < targetText.length) {
+      const timeout = setTimeout(() => {
+        setHeadlineRedacted(targetText.slice(0, headlineRedacted.length + 1));
+      }, 100);
       return () => clearTimeout(timeout);
+    } else {
+      setHeadlineTypingComplete(true);
     }
-    
-    if (isDeleting && redactedText === '') {
-      // Finished deleting, move to next word
-      setIsDeleting(false);
-      setWordIndex((prev) => (prev + 1) % REDACTED_WORDS.length);
-      return;
-    }
-
-    const timeout = setTimeout(() => {
-      if (isDeleting) {
-        setRedactedText((prev) => prev.slice(0, -1));
-      } else {
-        setRedactedText((prev) => currentWord.slice(0, prev.length + 1));
-      }
-    }, isDeleting ? 50 : 100);
-
-    return () => clearTimeout(timeout);
-  }, [redactedText, isDeleting, wordIndex]);
+  }, [mounted, headlineRedacted, headlineTypingComplete]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -242,65 +228,80 @@ export default function LandingPage() {
       {/* Main content */}
       <main className="relative z-10 flex flex-col items-center justify-center px-6 py-12 text-center max-w-5xl mx-auto">
         {/* Rotating Wireframe Globe */}
-        <div className={`mb-12 transition-all duration-1000 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
+        <div className={`mb-8 transition-all duration-1000 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
           <WireframeGlobe />
         </div>
 
-        {/* Heading */}
+        {/* Small text above headline */}
+        <p
+          className={`text-sm md:text-base text-zinc-500 uppercase tracking-widest mb-4 transition-all duration-1000 delay-200 ${
+            mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
+          }`}
+          style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
+        >
+          Scrape Unlimited Leads From{' '}
+          <span className="text-zinc-300 font-medium">
+            {headlineRedacted}
+            {!headlineTypingComplete && <span className="animate-pulse">|</span>}
+          </span>
+        </p>
+
+        {/* Headline */}
         <h1
-          className={`text-4xl md:text-6xl lg:text-7xl font-bold tracking-tight mb-8 transition-all duration-1000 delay-300 ${
+          className={`text-3xl md:text-5xl lg:text-6xl font-bold tracking-tight mb-6 transition-all duration-1000 delay-300 ${
             mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
           }`}
           style={{ fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: '-0.02em' }}
         >
-          PRIVATE MARKET INTELLIGENCE
+          <span className="text-white">[Redacted]</span>&apos;s database contains over{' '}
+          <span className="text-zinc-400">210M contacts</span>,{' '}
+          <span className="text-zinc-400">144M phone numbers</span>, and{' '}
+          <span className="text-zinc-400">35M global companies</span>.{' '}
+          Find and Enrich With Your Own Custom-Built Scraper.
         </h1>
 
-        {/* Subheading with typing animation */}
+        {/* Subheadline */}
         <p
-          className={`text-lg md:text-xl text-zinc-400 max-w-4xl mb-8 leading-relaxed transition-all duration-1000 delay-500 ${
+          className={`text-xl md:text-2xl text-zinc-300 font-medium mb-12 transition-all duration-1000 delay-500 ${
             mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
           }`}
           style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
         >
-          PROPRIETARY DATA INTERWOVEN WITH ARTIFICIAL INTELLIGENCE TO UNCOVER ALPHA AND OPPORTUNITIES IN PRIVATE MARKETS.
-        </p>
-        
-        <p
-          className={`text-lg md:text-xl text-zinc-300 mb-12 transition-all duration-1000 delay-600 ${
-            mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
-          }`}
-          style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
-        >
-          Private Scraper for{' '}
-          <span className="text-white font-semibold inline-block min-w-[120px]">
-            {redactedText}
-            <span className="animate-pulse">|</span>
-          </span>
+          Custom Built For You
         </p>
 
         {/* Features Section */}
         <div
-          className={`grid grid-cols-1 md:grid-cols-3 gap-6 mb-12 w-full max-w-4xl transition-all duration-1000 delay-700 ${
+          className={`grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 w-full max-w-4xl transition-all duration-1000 delay-700 ${
             mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
           }`}
         >
           <div className="bg-zinc-900/40 backdrop-blur-sm border border-zinc-800/50 rounded-xl p-6">
             <div className="text-3xl font-bold text-white mb-2">248M</div>
-            <div className="text-sm text-zinc-400">Unlimited Leads/Scrapes</div>
-            <div className="text-xs text-zinc-500 mt-1">Contacts</div>
+            <div className="text-sm text-zinc-400">Contacts</div>
           </div>
           
           <div className="bg-zinc-900/40 backdrop-blur-sm border border-zinc-800/50 rounded-xl p-6">
-            <div className="text-xl font-semibold text-white mb-2">Unpatchable</div>
-            <div className="text-sm text-zinc-400">Method</div>
+            <div className="text-xl font-semibold text-white mb-2">Undetectable</div>
+            <div className="text-sm text-zinc-400">Masking, FingerPrinted Setup,</div>
+            <div className="text-sm text-zinc-400">and Custom Built For You.</div>
           </div>
           
           <div className="bg-zinc-900/40 backdrop-blur-sm border border-zinc-800/50 rounded-xl p-6">
             <div className="text-xl font-semibold text-white mb-2">Email Verifier</div>
             <div className="text-sm text-zinc-400">Only pay for enrichment</div>
-            <div className="text-xs text-zinc-500 mt-1">if lead is valid</div>
+            <div className="text-xs text-zinc-500 mt-1">If the lead is valid</div>
           </div>
+        </div>
+
+        {/* Requirements Section */}
+        <div
+          className={`mb-12 transition-all duration-1000 delay-750 ${
+            mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
+          }`}
+        >
+          <p className="text-sm text-zinc-500 uppercase tracking-widest mb-2">Requirements</p>
+          <p className="text-lg text-zinc-300">1 Apollo Account</p>
         </div>
 
         {/* Request Access Button */}
