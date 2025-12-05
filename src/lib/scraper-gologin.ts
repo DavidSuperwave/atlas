@@ -174,15 +174,46 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                     return null;
                 };
 
-                // Robust website selectors (matching scraper-local.ts logic)
+                // Extended website selectors - Apollo may change these
                 const websiteSelectors = [
+                    // Primary selectors
                     'a[aria-label="website link"]',
                     'a[aria-label*="website"]',
-                    // Generic http link that isn't a known social/internal link
-                    'a[href^="http"]:not([href*="apollo.io"]):not([href*="linkedin.com"]):not([href*="twitter.com"]):not([href*="facebook.com"]):not([href*="google.com"]):not([href*="instagram.com"]):not([href*="youtube.com"])'
+                    'a[aria-label="Website"]',
+                    'a[aria-label="company website"]',
+                    // Icon-based detection (globe icon often used for website)
+                    'a[href^="http"] svg[data-icon="globe"]',
+                    // Look for links with globe/world icons
+                    'a:has(svg[class*="globe"])',
+                    'a:has(svg[data-testid*="globe"])',
+                    // Generic external link that isn't social/internal
+                    'a[href^="http"]:not([href*="apollo.io"]):not([href*="linkedin.com"]):not([href*="twitter.com"]):not([href*="facebook.com"]):not([href*="google.com"]):not([href*="instagram.com"]):not([href*="youtube.com"]):not([href*="crunchbase.com"])'
                 ];
 
-                const websiteLink = findInRow(websiteSelectors);
+                let websiteLink = findInRow(websiteSelectors);
+                
+                // Fallback: scan all links in row for external company websites
+                if (!websiteLink) {
+                    const allLinks = row.querySelectorAll('a[href^="http"]');
+                    for (const link of allLinks) {
+                        const href = (link as HTMLAnchorElement).href || '';
+                        // Skip known non-website links
+                        if (href.includes('apollo.io') || 
+                            href.includes('linkedin.com') || 
+                            href.includes('twitter.com') ||
+                            href.includes('facebook.com') ||
+                            href.includes('instagram.com') ||
+                            href.includes('youtube.com') ||
+                            href.includes('crunchbase.com') ||
+                            href.includes('google.com')) {
+                            continue;
+                        }
+                        // This is likely a company website
+                        websiteLink = link as HTMLAnchorElement;
+                        break;
+                    }
+                }
+
                 if (websiteLink) {
                     const href = websiteLink.getAttribute('data-href') || websiteLink.href || '';
                     domain = extractDomain(href);
@@ -190,11 +221,38 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
 
                 // Skip if no domain found
                 if (!domain) {
-                    // Debug info
+                    // Enhanced debug info - look specifically at Company Links cell
                     if (diagnostics.errors.length < 5) {
                         const cellCount = cells.length;
-                        const hasWebsiteLink = row.querySelector('a[aria-label="website link"]') ? 'yes' : 'no';
-                        diagnostics.errors.push(`Row ${rowIndex} (${name}) - cells:${cellCount}, website-link:${hasWebsiteLink}`);
+                        
+                        // Check the last few cells where "Company · Links" should be
+                        let companyLinksInfo = '';
+                        if (cells.length >= 12) {
+                            // Company · Links is typically cell 11 or 12 (0-indexed)
+                            for (let ci = 10; ci < Math.min(cells.length, 14); ci++) {
+                                const cell = cells[ci];
+                                const cellHTML = cell?.innerHTML?.slice(0, 100) || '';
+                                const cellLinks = cell?.querySelectorAll('a') || [];
+                                const cellText = cell?.textContent?.trim().slice(0, 30) || '';
+                                if (cellLinks.length > 0 || cellHTML.includes('href')) {
+                                    companyLinksInfo += `Cell${ci}:[${cellLinks.length}links,text="${cellText}"] `;
+                                }
+                            }
+                        }
+                        
+                        // Also check for any elements with href or data-href
+                        const anyHrefElements = row.querySelectorAll('[href], [data-href]');
+                        const hrefInfo: string[] = [];
+                        anyHrefElements.forEach((el, i) => {
+                            if (i < 5) {
+                                const href = el.getAttribute('href') || el.getAttribute('data-href') || '';
+                                const tag = el.tagName.toLowerCase();
+                                const label = el.getAttribute('aria-label') || '';
+                                hrefInfo.push(`<${tag} ${label ? 'label="'+label+'"' : ''} href="${href.slice(0,30)}">`);
+                            }
+                        });
+                        
+                        diagnostics.errors.push(`Row ${rowIndex} (${name}) - cells:${cellCount}, ${companyLinksInfo || 'no-company-links-cell'}, hrefs:[${hrefInfo.join(', ')}]`);
                     }
                     diagnostics.skippedNoDomain++;
                     continue;
@@ -444,16 +502,53 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
             }
             if (!tableFound) throw new Error('Table not found.');
 
-            // Wait for content to render
+            // Wait for content to render - scroll multiple times to trigger lazy loading
             await page.evaluate(() => window.scrollBy(0, 300));
-            await humanDelay(2000, 3000);
+            await humanDelay(1500, 2000);
+            await page.evaluate(() => window.scrollBy(0, 500));
+            await humanDelay(1500, 2000);
+            await page.evaluate(() => window.scrollTo(0, 0)); // Scroll back to top
+            await humanDelay(1000, 1500);
 
             // Wait for website links to appear (they load lazily)
-            try {
-                await page.waitForSelector('a[aria-label="website link"]', { timeout: 15000 });
-                console.log('[GOLOGIN-SCRAPER] Website links detected');
-            } catch {
-                console.log('[GOLOGIN-SCRAPER] No website links found on this page');
+            // Try multiple selectors as Apollo may change their structure
+            const websiteLinkSelectors = [
+                'a[aria-label="website link"]',
+                'a[aria-label*="website"]',
+                'a[href^="http"]:not([href*="linkedin.com"]):not([href*="apollo.io"])'
+            ];
+            
+            let foundWebsiteLinks = false;
+            for (const selector of websiteLinkSelectors) {
+                try {
+                    await page.waitForSelector(selector, { timeout: 5000 });
+                    const count = await page.$$eval(selector, els => els.length);
+                    if (count > 0) {
+                        console.log(`[GOLOGIN-SCRAPER] Website links detected via: ${selector} (${count} found)`);
+                        foundWebsiteLinks = true;
+                        break;
+                    }
+                } catch {
+                    continue;
+                }
+            }
+            
+            if (!foundWebsiteLinks) {
+                console.log('[GOLOGIN-SCRAPER] Warning: No website links found with known selectors');
+                // Log what links ARE present for debugging
+                const linkInfo = await page.evaluate(() => {
+                    const links = document.querySelectorAll('a[href^="http"]');
+                    const samples: string[] = [];
+                    links.forEach((a, i) => {
+                        if (i < 5) {
+                            const href = (a as HTMLAnchorElement).href;
+                            const label = a.getAttribute('aria-label') || 'no-label';
+                            samples.push(`[${label}] ${href.slice(0, 50)}`);
+                        }
+                    });
+                    return { count: links.length, samples };
+                });
+                console.log(`[GOLOGIN-SCRAPER] Found ${linkInfo.count} total links. Samples: ${linkInfo.samples.join(' | ')}`);
             }
 
             // Extract
