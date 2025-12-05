@@ -51,12 +51,12 @@ async function getProfileForScrape(userId?: string): Promise<ProfileLookupResult
         if (result.error) console.warn(`[GOLOGIN-SCRAPER] ${result.error}`);
         return result;
     }
-    
+
     const envProfileId = process.env.GOLOGIN_PROFILE_ID;
     if (envProfileId) {
         return { profileId: envProfileId, source: 'environment' };
     }
-    
+
     return {
         profileId: '',
         source: 'none',
@@ -103,15 +103,15 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                 if (url.includes('.') && !url.includes(' ')) {
                     return url.replace(/^www\./, '').split('/')[0].trim();
                 }
-            } catch {}
+            } catch { }
             return '';
         }
 
         // Find the table
-        const table = document.querySelector('div[role="treegrid"]') || 
-                      document.querySelector('table[role="grid"]') ||
-                      document.querySelector('table');
-        
+        const table = document.querySelector('div[role="treegrid"]') ||
+            document.querySelector('table[role="grid"]') ||
+            document.querySelector('table');
+
         if (!table) {
             diagnostics.errors.push('No table found');
             return { leads, diagnostics };
@@ -122,20 +122,20 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
 
         for (let rowIndex = 0; rowIndex < allRows.length; rowIndex++) {
             const row = allRows[rowIndex];
-            
+
             try {
                 // Skip header rows
                 if (row.querySelector('[role="columnheader"], th')) continue;
 
                 // Get all cells in this row
                 const cells = row.querySelectorAll('[role="gridcell"]');
-                
+
                 // ========================================
                 // CELL 1: NAME (REQUIRED)
                 // ========================================
                 let name = '';
                 let apolloUrl = '';
-                
+
                 // First try to find person link anywhere in row (most reliable)
                 const personLink = row.querySelector('a[href*="/people/"]') as HTMLAnchorElement;
                 if (personLink) {
@@ -147,8 +147,8 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                 }
 
                 // Validate name
-                if (!name || 
-                    name.toLowerCase().includes('access') || 
+                if (!name ||
+                    name.toLowerCase().includes('access') ||
                     name.toLowerCase().includes('email') ||
                     name.length < 2) {
                     diagnostics.skippedNoName++;
@@ -161,28 +161,45 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                 // We need the website link with aria-label="website link"
                 // ========================================
                 let domain = '';
-                
+
                 // Try Cell 5 first (Company · Links)
                 if (cells.length > 5) {
                     const companyLinksCell = cells[5];
                     const websiteLink = companyLinksCell?.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
                     if (websiteLink) {
-                        const href = websiteLink.getAttribute('data-href') || 
-                                    websiteLink.getAttribute('href') || '';
+                        const href = websiteLink.getAttribute('data-href') ||
+                            websiteLink.getAttribute('href') || '';
                         if (href && !href.includes('linkedin.com') && !href.includes('facebook.com') && !href.includes('twitter.com')) {
                             domain = extractDomain(href);
                         }
                     }
                 }
-                
-                // Fallback: search entire row for website link
+
+                // Fallback: search entire row for website link (Most reliable as columns shift)
                 if (!domain) {
                     const websiteLink = row.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
                     if (websiteLink) {
-                        const href = websiteLink.getAttribute('data-href') || 
-                                    websiteLink.getAttribute('href') || '';
+                        const href = websiteLink.getAttribute('data-href') ||
+                            websiteLink.getAttribute('href') || '';
                         if (href && !href.includes('linkedin.com') && !href.includes('facebook.com') && !href.includes('twitter.com')) {
                             domain = extractDomain(href);
+                        }
+                    }
+                }
+
+                // Try Cell 13/14 (Company · Links) - Observed in recent inspection
+                if (!domain && cells.length > 13) {
+                    // Check last few cells
+                    for (let i = cells.length - 1; i >= 10; i--) {
+                        const cell = cells[i];
+                        const websiteLink = cell?.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
+                        if (websiteLink) {
+                            const href = websiteLink.getAttribute('data-href') ||
+                                websiteLink.getAttribute('href') || '';
+                            if (href && !href.includes('linkedin.com') && !href.includes('facebook.com') && !href.includes('twitter.com')) {
+                                domain = extractDomain(href);
+                                break;
+                            }
                         }
                     }
                 }
@@ -210,7 +227,7 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                 // Cell 8: Company · Number of employees
                 // Cell 9: Company · Keywords
                 // ========================================
-                
+
                 // Cell 2: Job title
                 let title = '';
                 if (cells.length > 2) {
@@ -227,21 +244,19 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                 }
 
                 // Cell 4: Person's LinkedIn (from Links cell)
+                // Actually often in Cell 7 or 8
                 let personLinkedin = '';
-                if (cells.length > 4) {
-                    const personLinkedinLink = cells[4]?.querySelector('a[href*="linkedin.com/in"], a[data-href*="linkedin.com/in"]') as HTMLAnchorElement;
-                    if (personLinkedinLink) {
-                        personLinkedin = personLinkedinLink.getAttribute('data-href') || personLinkedinLink.href || '';
-                    }
+                const personLinkedinLink = row.querySelector('a[aria-label="linkedin link"][href*="/in/"]') as HTMLAnchorElement;
+                if (personLinkedinLink) {
+                    personLinkedin = personLinkedinLink.getAttribute('data-href') || personLinkedinLink.href || '';
                 }
 
                 // Cell 5: Company LinkedIn (from Company · Links cell)
+                // Actually often in the last cell (13 or 14)
                 let companyLinkedin = '';
-                if (cells.length > 5) {
-                    const companyLinkedinLink = cells[5]?.querySelector('a[aria-label="linkedin link"], a[href*="linkedin.com/company"], a[data-href*="linkedin.com/company"]') as HTMLAnchorElement;
-                    if (companyLinkedinLink) {
-                        companyLinkedin = companyLinkedinLink.getAttribute('data-href') || companyLinkedinLink.href || '';
-                    }
+                const companyLinkedinLink = row.querySelector('a[aria-label="linkedin link"][href*="/company/"]') as HTMLAnchorElement;
+                if (companyLinkedinLink) {
+                    companyLinkedin = companyLinkedinLink.getAttribute('data-href') || companyLinkedinLink.href || '';
                 }
 
                 // Cell 6: Industry
@@ -271,15 +286,8 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                     }
                 }
 
-                // Phone numbers (from anywhere in row)
+                // Phone numbers (Removed per user request)
                 const phoneNumbers: string[] = [];
-                const telLinks = row.querySelectorAll('a[href^="tel:"]');
-                telLinks.forEach(tel => {
-                    const phone = tel.textContent?.trim();
-                    if (phone && !phone.toLowerCase().includes('access')) {
-                        phoneNumbers.push(phone);
-                    }
-                });
 
                 // Log sample data
                 if (diagnostics.successfulExtractions < 3) {
@@ -312,11 +320,41 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
     });
 }
 
+function splitName(fullName: string): { firstName: string; lastName: string } {
+    if (!fullName) return { firstName: '', lastName: '' };
+
+    let name = fullName.trim();
+
+    // Remove common prefixes
+    const prefixes = ['Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'Rev.', 'Capt.', 'Lt.', 'Cmdr.', 'Col.', 'Gen.'];
+    for (const prefix of prefixes) {
+        if (name.startsWith(prefix + ' ')) {
+            name = name.substring(prefix.length + 1).trim();
+        }
+    }
+
+    // Remove common suffixes
+    const suffixes = ['Jr.', 'Sr.', 'II', 'III', 'IV', 'V', 'Ph.D.', 'MD', 'Esq.'];
+    for (const suffix of suffixes) {
+        if (name.endsWith(' ' + suffix)) {
+            name = name.substring(0, name.length - suffix.length - 1).trim();
+        }
+    }
+
+    const parts = name.split(/\s+/);
+    if (parts.length === 1) {
+        return { firstName: parts[0], lastName: '' };
+    }
+
+    const firstName = parts[0];
+    const lastName = parts.slice(1).join(' ');
+
+    return { firstName, lastName };
+}
+
 function convertToScrapedLead(raw: RawLeadData): ScrapedLead {
-    const nameParts = raw.name.trim().split(/\s+/);
-    const firstName = nameParts[0] || '';
-    const lastName = nameParts.slice(1).join(' ') || '';
-    
+    const { firstName, lastName } = splitName(raw.name);
+
     return {
         first_name: firstName,
         last_name: lastName,
@@ -343,7 +381,7 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
     if (!profileResult.profileId) {
         throw new Error(profileResult.error || 'No GoLogin profile available.');
     }
-    
+
     console.log(`[GOLOGIN-SCRAPER] Profile: ${profileResult.profileId}`);
 
     let page: Page | null = null;
@@ -361,7 +399,7 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
         } catch {
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
         }
-        
+
         await humanDelay(5000, 7000);
 
         // Check for Cloudflare
@@ -396,7 +434,7 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
             // Wait for content to render
             await page.evaluate(() => window.scrollBy(0, 300));
             await humanDelay(2000, 3000);
-            
+
             // Wait for website links to appear (they load lazily)
             try {
                 await page.waitForSelector('a[aria-label="website link"]', { timeout: 15000 });
@@ -407,7 +445,7 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
 
             // Extract
             const { leads: rawLeads, diagnostics } = await extractAllLeadsFromPage(page);
-            
+
             // Log results
             console.log(`[GOLOGIN-SCRAPER] ========== RESULTS ==========`);
             console.log(`[GOLOGIN-SCRAPER] Rows: ${diagnostics.rowsFound}`);
@@ -430,7 +468,7 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
             // Pagination
             if (currentPage < pages) {
                 const nextBtn = await page.$('button[aria-label="Next"]') ||
-                               await page.$('button[aria-label="next"]');
+                    await page.$('button[aria-label="next"]');
                 if (nextBtn) {
                     const isDisabled = await page.evaluate((el: Element) => el.hasAttribute('disabled'), nextBtn);
                     if (!isDisabled) {
@@ -452,7 +490,7 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
         throw error;
     } finally {
         if (page) {
-            try { await page.close(); } catch {}
+            try { await page.close(); } catch { }
         }
     }
 }

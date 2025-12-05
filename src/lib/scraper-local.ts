@@ -37,6 +37,42 @@ const humanDelay = (min: number, max: number) =>
     new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * (max - min + 1)) + min));
 
 /**
+ * Helper to split full name into first and last name
+ * Handles prefixes, suffixes, and multipart last names
+ */
+function splitName(fullName: string): { firstName: string; lastName: string } {
+    if (!fullName) return { firstName: '', lastName: '' };
+
+    let name = fullName.trim();
+
+    // Remove common prefixes
+    const prefixes = ['Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'Rev.', 'Capt.', 'Lt.', 'Cmdr.', 'Col.', 'Gen.'];
+    for (const prefix of prefixes) {
+        if (name.startsWith(prefix + ' ')) {
+            name = name.substring(prefix.length + 1).trim();
+        }
+    }
+
+    // Remove common suffixes
+    const suffixes = ['Jr.', 'Sr.', 'II', 'III', 'IV', 'V', 'Ph.D.', 'MD', 'Esq.'];
+    for (const suffix of suffixes) {
+        if (name.endsWith(' ' + suffix)) {
+            name = name.substring(0, name.length - suffix.length - 1).trim();
+        }
+    }
+
+    const parts = name.split(/\s+/);
+    if (parts.length === 1) {
+        return { firstName: parts[0], lastName: '' };
+    }
+
+    const firstName = parts[0];
+    const lastName = parts.slice(1).join(' ');
+
+    return { firstName, lastName };
+}
+
+/**
  * Extract text content from an element, with fallback
  */
 async function getTextContent(page: Page, element: ElementHandle | null): Promise<string> {
@@ -87,15 +123,15 @@ async function extractPersonData(page: Page, row: ElementHandle): Promise<{ name
         '[data-cy="person-name"] a',
         'a[class*="person"]'
     ];
-    
+
     const nameEl = await findBySelectors(row, personSelectors);
     if (!nameEl) return null;
-    
+
     const name = await getTextContent(page, nameEl);
     const linkedinUrl = await getHref(page, nameEl);
-    
+
     if (!name) return null;
-    
+
     return { name, linkedinUrl };
 }
 
@@ -111,10 +147,10 @@ async function extractCompanyData(page: Page, row: ElementHandle): Promise<{ nam
         '[data-cy="company-name"] a',
         'a[class*="company"]'
     ];
-    
+
     const companyEl = await findBySelectors(row, companySelectors);
     const name = await getTextContent(page, companyEl);
-    
+
     // Try to find company LinkedIn
     const linkedinSelectors = [
         'a[href*="linkedin.com/company"]',
@@ -123,35 +159,30 @@ async function extractCompanyData(page: Page, row: ElementHandle): Promise<{ nam
     ];
     const linkedinEl = await findBySelectors(row, linkedinSelectors);
     const linkedin = await getHref(page, linkedinEl);
-    
+
     // Try to find company website
+    // In recent Apollo versions, this is often in a "Links" cell at the end (index 13/14)
+    // We look for aria-label="website link" globally in the row to be safe
     const websiteSelectors = [
         'a[aria-label="website link"]',
         'a[aria-label*="website"]',
-        'a[href^="http"]:not([href*="apollo.io"]):not([href*="linkedin.com"]):not([href*="twitter.com"]):not([href*="facebook.com"])'
+        'a[href^="http"]:not([href*="apollo.io"]):not([href*="linkedin.com"]):not([href*="twitter.com"]):not([href*="facebook.com"]):not([href*="google.com"])'
     ];
     const websiteEl = await findBySelectors(row, websiteSelectors);
     const website = await getHref(page, websiteEl);
-    
+
     return { name, linkedin, website };
 }
 
 /**
  * Extract phone numbers from a row
  */
+/**
+ * Extract phone numbers from a row
+ * @deprecated Phone number extraction removed per user request
+ */
 async function extractPhoneNumbers(page: Page, row: ElementHandle): Promise<string[]> {
-    const phones: string[] = [];
-    
-    // Try tel: links first
-    const telLinks = await row.$$('a[href^="tel:"]');
-    for (const link of telLinks) {
-        const phone = await getTextContent(page, link);
-        if (phone && phone !== 'Access Mobile') {
-            phones.push(phone);
-        }
-    }
-    
-    return phones;
+    return [];
 }
 
 /**
@@ -212,7 +243,7 @@ export async function scrapeApollo(url: string, pages: number = 1): Promise<Scra
                 '[data-cy="people-table"]',
                 '.zp_tZMWg' // Apollo-specific class (may change)
             ];
-            
+
             let tableFound = false;
             for (const selector of tableSelectors) {
                 try {
@@ -224,7 +255,7 @@ export async function scrapeApollo(url: string, pages: number = 1): Promise<Scra
                     continue;
                 }
             }
-            
+
             if (!tableFound) {
                 throw new Error('Apollo table not found. Ensure you are logged in and on a valid search page.');
             }
@@ -242,7 +273,7 @@ export async function scrapeApollo(url: string, pages: number = 1): Promise<Scra
                 'table[role="grid"] tr',
                 '[data-cy="people-table-row"]'
             ];
-            
+
             for (const selector of rowSelectors) {
                 rows = await page.$$(selector);
                 if (rows.length > 0) {
@@ -277,8 +308,8 @@ export async function scrapeApollo(url: string, pages: number = 1): Promise<Scra
                         continue;
                     }
 
-                    const [firstName, ...lastNameParts] = personData.name.split(' ');
-                    const lastName = lastNameParts.join(' ');
+                    // Robust name splitting
+                    const { firstName, lastName } = splitName(personData.name);
 
                     // Company data
                     const companyData = await extractCompanyData(page, row);
@@ -295,13 +326,13 @@ export async function scrapeApollo(url: string, pages: number = 1): Promise<Scra
                     let keywords: string[] = [];
 
                     // Try to extract from cells by position (with bounds checking)
-                    // Common Apollo layout: 0:Checkbox, 1:Name, 2:Title, 3:Company, 4:Email, 5:Phone, 
-                    // 6:Actions, 7:Links, 8:Score, 9:Location, 10:Employees, 11:Industry, 12:Keywords, 13:Company Links
-                    
+                    // Common Apollo layout (2024/2025): 
+                    // 0:Checkbox, 1:Name, 2:Title, 3:Company, ... 7:Person LinkedIn, ... 13:Company Links (Website/LinkedIn)
+
                     if (cells.length >= 3) {
                         title = await extractCellData(page, cells, 2);
                     }
-                    
+
                     // If company name wasn't found semantically, try cell 3
                     let companyName = companyData.name;
                     if (!companyName && cells.length >= 4) {
@@ -374,7 +405,7 @@ export async function scrapeApollo(url: string, pages: number = 1): Promise<Scra
                     '[data-cy="pagination-next"]',
                     'button:has-text("Next")'
                 ];
-                
+
                 let nextBtn: ElementHandle | null = null;
                 for (const selector of nextSelectors) {
                     try {
@@ -384,7 +415,7 @@ export async function scrapeApollo(url: string, pages: number = 1): Promise<Scra
                         continue;
                     }
                 }
-                
+
                 if (nextBtn) {
                     const isDisabled = await page.evaluate(el => el.hasAttribute('disabled'), nextBtn);
                     if (!isDisabled) {
