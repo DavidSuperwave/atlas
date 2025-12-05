@@ -382,11 +382,32 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
         page.setDefaultTimeout(SCRAPE_TIMEOUT);
         await page.setViewport({ width: 1366, height: 768 });
 
-        console.log(`[GOLOGIN-SCRAPER] Navigating...`);
-        try {
-            await page.goto(url, { waitUntil: 'load', timeout: 60000 });
-        } catch {
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        // Robust navigation with retries
+        let navigationSuccess = false;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                if (!browser.isConnected()) {
+                    console.log(`[GOLOGIN-SCRAPER] Browser disconnected, reconnecting (attempt ${attempt})...`);
+                    browser = await getBrowserForProfile(profileResult.profileId);
+                    page = await browser.newPage();
+                    page.setDefaultTimeout(SCRAPE_TIMEOUT);
+                    await page.setViewport({ width: 1366, height: 768 });
+                }
+
+                console.log(`[GOLOGIN-SCRAPER] Navigating (attempt ${attempt})...`);
+                try {
+                    await page.goto(url, { waitUntil: 'load', timeout: 60000 });
+                } catch (navError) {
+                    console.warn(`[GOLOGIN-SCRAPER] Load timeout, trying domcontentloaded...`);
+                    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+                }
+                navigationSuccess = true;
+                break;
+            } catch (error) {
+                console.error(`[GOLOGIN-SCRAPER] Navigation failed (attempt ${attempt}):`, error);
+                if (attempt === 3) throw error;
+                await humanDelay(2000, 4000);
+            }
         }
 
         await humanDelay(5000, 7000);

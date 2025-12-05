@@ -114,7 +114,7 @@ export class BrowserManagerGoLogin {
     async startProfile(): Promise<string> {
         console.log(`[GOLOGIN-BROWSER] ========================================`);
         console.log(`[GOLOGIN-BROWSER] Starting GoLogin profile: ${this.profileId}`);
-        
+
         // Step 1: Validate we have required configuration
         if (!this.profileId) {
             throw new Error(
@@ -122,7 +122,7 @@ export class BrowserManagerGoLogin {
                 'or assign a profile to the user in the admin panel.'
             );
         }
-        
+
         if (!this.client.hasApiToken()) {
             throw new Error(
                 'GOLOGIN_API_TOKEN is not set. Get your API token from ' +
@@ -137,7 +137,7 @@ export class BrowserManagerGoLogin {
             // Get diagnostic info
             const diagnostic = await this.client.getDiagnosticReport();
             console.error(`[GOLOGIN-BROWSER] API check failed. Diagnostic:\n${diagnostic}`);
-            
+
             throw new Error(
                 'GoLogin API is not available. Possible causes:\n' +
                 '1. API token is invalid or expired\n' +
@@ -157,25 +157,25 @@ export class BrowserManagerGoLogin {
             console.log(`[GOLOGIN-BROWSER] ✓ Profile started successfully`);
             console.log(`[GOLOGIN-BROWSER] WebSocket: ${wsEndpoint}`);
             console.log(`[GOLOGIN-BROWSER] ========================================`);
-            
+
             return wsEndpoint;
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             console.error(`[GOLOGIN-BROWSER] ✗ Failed to start profile: ${errorMessage}`);
-            
+
             // Provide specific guidance based on error
             let guidance = '';
             if (errorMessage.includes('not found')) {
                 guidance = '\n\nThe profile ID may be incorrect. Check your profile ID in GoLogin dashboard.';
             } else if (errorMessage.includes('WebSocket')) {
                 guidance = '\n\nThe profile may already be running elsewhere. Try:\n' +
-                          '1. Close any other sessions using this profile\n' +
-                          '2. Stop the profile from GoLogin dashboard\n' +
-                          '3. Wait 30 seconds and try again';
+                    '1. Close any other sessions using this profile\n' +
+                    '2. Stop the profile from GoLogin dashboard\n' +
+                    '3. Wait 30 seconds and try again';
             } else if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
                 guidance = '\n\nYour API token appears to be invalid. Generate a new one in GoLogin Settings → API.';
             }
-            
+
             throw new Error(errorMessage + guidance);
         }
     }
@@ -213,8 +213,8 @@ export class BrowserManagerGoLogin {
      * @throws Error if connection fails after all retries
      */
     async connect(): Promise<Browser> {
-        // Return existing connection if available
-        if (this.browser && this.browser.connected) {
+        // Return existing connection if available and connected
+        if (this.browser && this.browser.isConnected()) {
             console.log(`[GOLOGIN-BROWSER] Reusing existing browser connection for profile ${this.profileId}`);
             return this.browser;
         }
@@ -233,7 +233,7 @@ export class BrowserManagerGoLogin {
         try {
             // Ensure profile is running and get WebSocket endpoint
             wsEndpoint = await this.ensureProfileReady();
-            
+
             // Wait for browser to fully initialize after profile start
             console.log(`[GOLOGIN-BROWSER] Waiting for browser initialization...`);
             await this.sleep(PROFILE_START_DELAY);
@@ -262,18 +262,18 @@ export class BrowserManagerGoLogin {
                 } catch (error) {
                     lastError = error instanceof Error ? error : new Error(String(error));
                     const errorMessage = lastError.message;
-                    
+
                     console.error(`[GOLOGIN-BROWSER] Connection attempt ${attempt} failed:`);
                     console.error(`[GOLOGIN-BROWSER]   Error: ${errorMessage}`);
 
                     if (attempt < MAX_RETRIES) {
                         // Determine if we should restart the profile
-                        const shouldRestart = 
+                        const shouldRestart =
                             errorMessage.includes('ECONNREFUSED') ||
                             errorMessage.includes('WebSocket') ||
                             errorMessage.includes('closed') ||
                             attempt === 2;
-                        
+
                         if (shouldRestart) {
                             console.log(`[GOLOGIN-BROWSER] Restarting profile to get fresh connection...`);
                             try {
@@ -383,7 +383,7 @@ Try:
             configured: this.isConfigured(),
             profileId: this.profileId,
             profileRunning: status.isRunning,
-            browserConnected: this.browser?.connected || false,
+            browserConnected: this.browser?.isConnected() || false,
             wsEndpoint: this.currentWsEndpoint
         };
     }
@@ -441,25 +441,25 @@ Try:
     }> {
         try {
             console.log(`[GOLOGIN-BROWSER] Testing connection for profile ${this.profileId}...`);
-            
+
             // Try to start the profile
             const wsEndpoint = await this.startProfile();
-            
+
             // Try to connect
             const browser = await puppeteer.connect({
                 browserWSEndpoint: wsEndpoint,
                 defaultViewport: null,
             });
-            
+
             // Get a page to verify it works
             const pages = await browser.pages();
             const pageCount = pages.length;
-            
+
             // Disconnect (don't close, just disconnect)
             await browser.disconnect();
-            
+
             console.log(`[GOLOGIN-BROWSER] ✓ Connection test successful! Found ${pageCount} page(s)`);
-            
+
             return {
                 success: true,
                 message: `Successfully connected to GoLogin browser. Found ${pageCount} page(s).`,
@@ -468,7 +468,7 @@ Try:
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             console.error(`[GOLOGIN-BROWSER] ✗ Connection test failed: ${errorMessage}`);
-            
+
             return {
                 success: false,
                 message: 'Failed to connect to GoLogin browser',
@@ -496,13 +496,13 @@ Try:
  */
 export function getBrowserManagerForProfile(profileId: string): BrowserManagerGoLogin {
     let manager = browserManagerCache.get(profileId);
-    
+
     if (!manager) {
         console.log(`[GOLOGIN-BROWSER] Creating new browser manager for profile ${profileId}`);
         manager = new BrowserManagerGoLogin(profileId);
         browserManagerCache.set(profileId, manager);
     }
-    
+
     return manager;
 }
 
@@ -543,6 +543,6 @@ export async function cleanupAllProfiles(): Promise<void> {
 
 // Export default instance for backward compatibility (uses env var profile)
 const defaultProfileId = process.env.GOLOGIN_PROFILE_ID || '';
-export const browserManagerGoLogin = defaultProfileId 
+export const browserManagerGoLogin = defaultProfileId
     ? getBrowserManagerForProfile(defaultProfileId)
     : new BrowserManagerGoLogin(''); // Will fail if used without profile ID
