@@ -174,30 +174,52 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                     return null;
                 };
 
-                // Extended website selectors - Apollo may change these
+                // Extended website selectors - Apollo uses data-href, not href!
                 const websiteSelectors = [
-                    // Primary selectors
+                    // Primary selectors - Apollo uses aria-label="website link"
                     'a[aria-label="website link"]',
                     'a[aria-label*="website"]',
                     'a[aria-label="Website"]',
                     'a[aria-label="company website"]',
-                    // Icon-based detection (globe icon often used for website)
-                    'a[href^="http"] svg[data-icon="globe"]',
-                    // Look for links with globe/world icons
-                    'a:has(svg[class*="globe"])',
-                    'a:has(svg[data-testid*="globe"])',
+                    // Data-href based selectors (Apollo stores URL in data-href)
+                    'a[data-href^="http"]:not([data-href*="linkedin.com"])',
+                    '[data-href^="http"]:not([data-href*="linkedin.com"]):not([data-href*="facebook.com"]):not([data-href*="twitter.com"])',
                     // Generic external link that isn't social/internal
                     'a[href^="http"]:not([href*="apollo.io"]):not([href*="linkedin.com"]):not([href*="twitter.com"]):not([href*="facebook.com"]):not([href*="google.com"]):not([href*="instagram.com"]):not([href*="youtube.com"]):not([href*="crunchbase.com"])'
                 ];
 
                 let websiteLink = findInRow(websiteSelectors);
                 
-                // Fallback: scan all links in row for external company websites
+                // Fallback: scan all elements with data-href (Apollo's pattern)
+                if (!websiteLink) {
+                    // First try data-href elements (Apollo's actual pattern)
+                    const dataHrefElements = row.querySelectorAll('[data-href]');
+                    for (const el of dataHrefElements) {
+                        const href = el.getAttribute('data-href') || '';
+                        // Skip known non-website links
+                        if (!href || 
+                            href.includes('linkedin.com') || 
+                            href.includes('twitter.com') ||
+                            href.includes('facebook.com') ||
+                            href.includes('instagram.com') ||
+                            href.includes('youtube.com') ||
+                            href.includes('crunchbase.com') ||
+                            href.includes('google.com')) {
+                            continue;
+                        }
+                        // Check if it looks like a website (has http and a domain)
+                        if (href.startsWith('http')) {
+                            websiteLink = el as HTMLAnchorElement;
+                            break;
+                        }
+                    }
+                }
+                
+                // Second fallback: regular href links
                 if (!websiteLink) {
                     const allLinks = row.querySelectorAll('a[href^="http"]');
                     for (const link of allLinks) {
                         const href = (link as HTMLAnchorElement).href || '';
-                        // Skip known non-website links
                         if (href.includes('apollo.io') || 
                             href.includes('linkedin.com') || 
                             href.includes('twitter.com') ||
@@ -208,51 +230,42 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                             href.includes('google.com')) {
                             continue;
                         }
-                        // This is likely a company website
                         websiteLink = link as HTMLAnchorElement;
                         break;
                     }
                 }
 
                 if (websiteLink) {
-                    const href = websiteLink.getAttribute('data-href') || websiteLink.href || '';
+                    // Apollo uses data-href, so check that first!
+                    const href = websiteLink.getAttribute('data-href') || websiteLink.getAttribute('href') || websiteLink.href || '';
                     domain = extractDomain(href);
                 }
 
                 // Skip if no domain found
                 if (!domain) {
-                    // Enhanced debug info - look specifically at Company Links cell
+                    // Enhanced debug info
                     if (diagnostics.errors.length < 5) {
                         const cellCount = cells.length;
                         
-                        // Check the last few cells where "Company · Links" should be
-                        let companyLinksInfo = '';
-                        if (cells.length >= 12) {
-                            // Company · Links is typically cell 11 or 12 (0-indexed)
-                            for (let ci = 10; ci < Math.min(cells.length, 14); ci++) {
-                                const cell = cells[ci];
-                                const cellHTML = cell?.innerHTML?.slice(0, 100) || '';
-                                const cellLinks = cell?.querySelectorAll('a') || [];
-                                const cellText = cell?.textContent?.trim().slice(0, 30) || '';
-                                if (cellLinks.length > 0 || cellHTML.includes('href')) {
-                                    companyLinksInfo += `Cell${ci}:[${cellLinks.length}links,text="${cellText}"] `;
-                                }
-                            }
-                        }
+                        // Count data-href elements (Apollo's pattern)
+                        const dataHrefEls = row.querySelectorAll('[data-href]');
+                        const websiteLinkEl = row.querySelector('a[aria-label="website link"]');
                         
-                        // Also check for any elements with href or data-href
-                        const anyHrefElements = row.querySelectorAll('[href], [data-href]');
-                        const hrefInfo: string[] = [];
-                        anyHrefElements.forEach((el, i) => {
-                            if (i < 5) {
-                                const href = el.getAttribute('href') || el.getAttribute('data-href') || '';
-                                const tag = el.tagName.toLowerCase();
+                        // Get sample of data-href values
+                        const dataHrefs: string[] = [];
+                        dataHrefEls.forEach((el, i) => {
+                            if (i < 3) {
+                                const href = el.getAttribute('data-href') || '';
                                 const label = el.getAttribute('aria-label') || '';
-                                hrefInfo.push(`<${tag} ${label ? 'label="'+label+'"' : ''} href="${href.slice(0,30)}">`);
+                                dataHrefs.push(`[${label}]${href.slice(0, 40)}`);
                             }
                         });
                         
-                        diagnostics.errors.push(`Row ${rowIndex} (${name}) - cells:${cellCount}, ${companyLinksInfo || 'no-company-links-cell'}, hrefs:[${hrefInfo.join(', ')}]`);
+                        diagnostics.errors.push(
+                            `Row ${rowIndex} (${name}) - cells:${cellCount}, ` +
+                            `website-link-el:${websiteLinkEl ? 'yes' : 'no'}, ` +
+                            `data-hrefs(${dataHrefEls.length}):${dataHrefs.join('; ') || 'none'}`
+                        );
                     }
                     diagnostics.skippedNoDomain++;
                     continue;
