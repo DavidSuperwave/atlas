@@ -162,46 +162,27 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                 // ========================================
                 let domain = '';
 
-                // Try Cell 5 first (Company · Links)
-                if (cells.length > 5) {
-                    const companyLinksCell = cells[5];
-                    const websiteLink = companyLinksCell?.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
-                    if (websiteLink) {
-                        const href = websiteLink.getAttribute('data-href') ||
-                            websiteLink.getAttribute('href') || '';
-                        if (href && !href.includes('linkedin.com') && !href.includes('facebook.com') && !href.includes('twitter.com')) {
-                            domain = extractDomain(href);
-                        }
+                // Helper to find element by multiple selectors
+                const findInRow = (selectors: string[]) => {
+                    for (const sel of selectors) {
+                        const el = row.querySelector(sel);
+                        if (el) return el as HTMLAnchorElement;
                     }
-                }
+                    return null;
+                };
 
-                // Fallback: search entire row for website link (Most reliable as columns shift)
-                if (!domain) {
-                    const websiteLink = row.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
-                    if (websiteLink) {
-                        const href = websiteLink.getAttribute('data-href') ||
-                            websiteLink.getAttribute('href') || '';
-                        if (href && !href.includes('linkedin.com') && !href.includes('facebook.com') && !href.includes('twitter.com')) {
-                            domain = extractDomain(href);
-                        }
-                    }
-                }
+                // Robust website selectors (matching scraper-local.ts logic)
+                const websiteSelectors = [
+                    'a[aria-label="website link"]',
+                    'a[aria-label*="website"]',
+                    // Generic http link that isn't a known social/internal link
+                    'a[href^="http"]:not([href*="apollo.io"]):not([href*="linkedin.com"]):not([href*="twitter.com"]):not([href*="facebook.com"]):not([href*="google.com"]):not([href*="instagram.com"]):not([href*="youtube.com"])'
+                ];
 
-                // Try Cell 13/14 (Company · Links) - Observed in recent inspection
-                if (!domain && cells.length > 13) {
-                    // Check last few cells
-                    for (let i = cells.length - 1; i >= 10; i--) {
-                        const cell = cells[i];
-                        const websiteLink = cell?.querySelector('a[aria-label="website link"]') as HTMLAnchorElement;
-                        if (websiteLink) {
-                            const href = websiteLink.getAttribute('data-href') ||
-                                websiteLink.getAttribute('href') || '';
-                            if (href && !href.includes('linkedin.com') && !href.includes('facebook.com') && !href.includes('twitter.com')) {
-                                domain = extractDomain(href);
-                                break;
-                            }
-                        }
-                    }
+                const websiteLink = findInRow(websiteSelectors);
+                if (websiteLink) {
+                    const href = websiteLink.getAttribute('data-href') || websiteLink.href || '';
+                    domain = extractDomain(href);
                 }
 
                 // Skip if no domain found
@@ -244,17 +225,25 @@ async function extractAllLeadsFromPage(page: Page): Promise<{ leads: RawLeadData
                 }
 
                 // Cell 4: Person's LinkedIn (from Links cell)
-                // Actually often in Cell 7 or 8
                 let personLinkedin = '';
-                const personLinkedinLink = row.querySelector('a[aria-label="linkedin link"][href*="/in/"]') as HTMLAnchorElement;
+                const personLinkedinSelectors = [
+                    'a[aria-label="linkedin link"][href*="/in/"]',
+                    'a[href*="linkedin.com/in/"]',
+                    'a[aria-label*="LinkedIn"][href*="/in/"]'
+                ];
+                const personLinkedinLink = findInRow(personLinkedinSelectors);
                 if (personLinkedinLink) {
                     personLinkedin = personLinkedinLink.getAttribute('data-href') || personLinkedinLink.href || '';
                 }
 
                 // Cell 5: Company LinkedIn (from Company · Links cell)
-                // Actually often in the last cell (13 or 14)
                 let companyLinkedin = '';
-                const companyLinkedinLink = row.querySelector('a[aria-label="linkedin link"][href*="/company/"]') as HTMLAnchorElement;
+                const companyLinkedinSelectors = [
+                    'a[aria-label="linkedin link"][href*="/company/"]',
+                    'a[href*="linkedin.com/company/"]',
+                    'a[aria-label*="LinkedIn"][href*="company"]'
+                ];
+                const companyLinkedinLink = findInRow(companyLinkedinSelectors);
                 if (companyLinkedinLink) {
                     companyLinkedin = companyLinkedinLink.getAttribute('data-href') || companyLinkedinLink.href || '';
                 }
