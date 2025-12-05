@@ -377,7 +377,7 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
     const allLeads: ScrapedLead[] = [];
 
     try {
-        const browser = await getBrowserForProfile(profileResult.profileId);
+        let browser = await getBrowserForProfile(profileResult.profileId);
         page = await browser.newPage();
         page.setDefaultTimeout(SCRAPE_TIMEOUT);
         await page.setViewport({ width: 1366, height: 768 });
