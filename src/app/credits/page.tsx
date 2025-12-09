@@ -15,14 +15,15 @@ interface Transaction {
 interface PricingPlan {
     name: string;
     credits: number;
-    price: number;
+    price: number | null;  // null for Enterprise (custom pricing)
     popular?: boolean;
+    isEnterprise?: boolean;
 }
 
 const PRICING_PLANS: PricingPlan[] = [
-    { name: 'Starter', credits: 5000, price: 5 },
-    { name: 'Professional', credits: 25000, price: 25, popular: true },
-    { name: 'Enterprise', credits: 100000, price: 100 },
+    { name: 'Starter', credits: 5000, price: 7.50 },
+    { name: 'Pro', credits: 25000, price: 32.50, popular: true },
+    { name: 'Enterprise', credits: 100000, price: null, isEnterprise: true },
 ];
 
 export default function CreditsPage() {
@@ -208,19 +209,38 @@ export default function CreditsPage() {
                                     <div className="text-zinc-500 text-sm">credits</div>
                                 </div>
                                 <div className="text-center mb-6">
-                                    <span className="text-2xl font-bold text-white">${plan.price}</span>
+                                    {plan.isEnterprise ? (
+                                        <div>
+                                            <span className="text-lg text-zinc-400">As low as</span>
+                                            <span className="text-2xl font-bold text-white ml-2">$0.50</span>
+                                            <span className="text-zinc-400">/credit</span>
+                                        </div>
+                                    ) : (
+                                        <span className="text-2xl font-bold text-white">${plan.price}</span>
+                                    )}
                                 </div>
-                                <button
-                                    onClick={() => handleOrderRequest(plan)}
-                                    disabled={orderSubmitting && selectedPlan === plan.name}
-                                    className={`w-full py-3 px-4 rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-                                        plan.popular
-                                            ? 'bg-white text-black hover:bg-zinc-200'
-                                            : 'bg-zinc-800 text-white hover:bg-zinc-700'
-                                    }`}
-                                >
-                                    {orderSubmitting && selectedPlan === plan.name ? 'Submitting...' : 'Request Credits'}
-                                </button>
+                                {plan.isEnterprise ? (
+                                    <a
+                                        href="https://t.me/atlasscraper"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="w-full py-3 px-4 rounded-lg font-semibold transition-all bg-blue-600 text-white hover:bg-blue-500 block text-center"
+                                    >
+                                        Contact @atlasscraper
+                                    </a>
+                                ) : (
+                                    <button
+                                        onClick={() => handleOrderRequest(plan)}
+                                        disabled={orderSubmitting && selectedPlan === plan.name}
+                                        className={`w-full py-3 px-4 rounded-lg font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                                            plan.popular
+                                                ? 'bg-white text-black hover:bg-zinc-200'
+                                                : 'bg-zinc-800 text-white hover:bg-zinc-700'
+                                        }`}
+                                    >
+                                        {orderSubmitting && selectedPlan === plan.name ? 'Submitting...' : 'Request Credits'}
+                                    </button>
+                                )}
                             </div>
                         ))}
                     </div>

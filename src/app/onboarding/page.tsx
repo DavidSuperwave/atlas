@@ -644,14 +644,14 @@ function OnboardingContent() {
                                 </p>
                             </div>
 
-                            {/* Pricing Plans Placeholder */}
+                            {/* Pricing Plans */}
                             <div className="space-y-3">
                                 <h3 className="text-sm font-medium text-zinc-400">Choose a plan (optional)</h3>
                                 
                                 {[
-                                    { id: 'starter', name: 'Starter', credits: '5,000', price: 'TBD' },
-                                    { id: 'pro', name: 'Pro', credits: '25,000', price: 'TBD' },
-                                    { id: 'enterprise', name: 'Enterprise', credits: 'Unlimited', price: 'Contact Us' },
+                                    { id: 'starter', name: 'Starter', credits: '5,000', price: '$7.50' },
+                                    { id: 'pro', name: 'Pro', credits: '25,000', price: '$32.50' },
+                                    { id: 'enterprise', name: 'Enterprise', credits: '100,000', price: 'Contact Rep' },
                                 ].map((plan) => (
                                     <button
                                         key={plan.id}

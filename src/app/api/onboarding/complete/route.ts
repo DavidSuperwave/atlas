@@ -15,8 +15,15 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Name is required' }, { status: 400 });
         }
 
-        if (!password || password.length < 6) {
-            return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 });
+        // Password validation: minimum 8 characters with at least one letter and one number
+        if (!password || password.length < 8) {
+            return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 });
+        }
+        
+        const hasLetter = /[a-zA-Z]/.test(password);
+        const hasNumber = /[0-9]/.test(password);
+        if (!hasLetter || !hasNumber) {
+            return NextResponse.json({ error: 'Password must contain at least one letter and one number' }, { status: 400 });
         }
 
         if (hasApolloAccount === null || hasApolloAccount === undefined) {
@@ -154,7 +161,7 @@ export async function POST(request: Request) {
             const planMapping: Record<string, { name: string; credits: number }> = {
                 starter: { name: 'Starter', credits: 5000 },
                 pro: { name: 'Pro', credits: 25000 },
-                enterprise: { name: 'Enterprise', credits: 0 }, // 0 represents unlimited
+                enterprise: { name: 'Enterprise', credits: 100000 },
             };
 
             const plan = planMapping[creditsPlan];
