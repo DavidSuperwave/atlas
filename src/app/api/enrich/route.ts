@@ -4,6 +4,7 @@ import { verificationQueue } from '@/lib/verification-queue';
 import { generatePermutations, extractDomain } from '@/lib/permutation-utils';
 import { getCurrentUser, getUserProfile } from '@/lib/supabase-server';
 import { handleCors, corsJsonResponse } from '@/lib/cors';
+import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
 
 // Use service role key to bypass RLS for server-side operations
 const supabase = createClient(
@@ -29,6 +30,18 @@ export async function POST(request: Request) {
             return corsJsonResponse({ error: 'Unauthorized' }, request, { status: 401 });
         }
 
+        // Rate limit per user for enrichment requests
+        const rateLimit = checkRateLimit(user.id, RATE_LIMITS.ENRICH);
+        if (rateLimit.limited) {
+            return corsJsonResponse({
+                error: 'Rate limit exceeded',
+                retryAfter: rateLimit.resetInSeconds
+            }, request, {
+                status: 429,
+                headers: { 'Retry-After': rateLimit.resetInSeconds.toString() }
+            });
+        }
+
         // Get user profile to check credits
         const profile = await getUserProfile(user.id);
         if (!profile) {
@@ -39,6 +52,29 @@ export async function POST(request: Request) {
 
         // Support bulk scrape enrichment, single lead with custom permutations, or single lead auto-generate
         if (body.scrapeId) {
+            // Ownership check: scrape must belong to current user or admin
+            const { data: scrape } = await supabase
+                .from('scrapes')
+                .select('user_id')
+                .eq('id', body.scrapeId)
+                .single();
+
+            if (!scrape) {
+                return corsJsonResponse({ error: 'Scrape not found' }, request, { status: 404 });
+            }
+
+            const { data: profileRole } = await supabase
+                .from('profiles')
+                .select('role')
+                .eq('id', user.id)
+                .single();
+
+            const isAdmin = profileRole?.role === 'admin';
+
+            if (scrape.user_id !== user.id && !isAdmin) {
+                return corsJsonResponse({ error: 'Not authorized to enrich this scrape' }, request, { status: 403 });
+            }
+
             return await enrichScrape(body.scrapeId, user.id, profile.credits_balance, request);
         } else if (body.leadId && body.permutations) {
             // Custom permutations provided (from edit modal)

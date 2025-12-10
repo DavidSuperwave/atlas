@@ -3,9 +3,11 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { signOut } from '@/lib/supabase-client';
+import { useAuth } from '@/components/AuthProvider';
 
 export default function PendingApprovalPage() {
     const router = useRouter();
+    const { user, loading } = useAuth();
 
     async function handleSignOut() {
         await signOut();
@@ -13,15 +15,21 @@ export default function PendingApprovalPage() {
         router.refresh();
     }
 
-    // Prevent navigation away from this page while pending
+    // Redirect unauthenticated users to login
     useEffect(() => {
-        const handleBeforeUnload = () => {
-            // Just a safeguard, actual blocking is done by middleware
-        };
-        
-        window.addEventListener('beforeunload', handleBeforeUnload);
-        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-    }, []);
+        if (!loading && !user) {
+            router.push('/login');
+        }
+    }, [user, loading, router]);
+
+    // Show loading state while checking auth or redirecting
+    if (loading || !user) {
+        return (
+            <div className="min-h-screen bg-black flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white"></div>
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen bg-black flex items-center justify-center p-4">

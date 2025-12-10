@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { scrapeQueue, validateEnvironment } from '@/lib/scrape-queue';
+import { getCurrentUser, isUserAdmin } from '@/lib/supabase-server';
 
 export const runtime = 'nodejs';
 
@@ -94,9 +95,21 @@ export async function GET() {
  * POST /api/init
  * 
  * Force restart the queue processor (useful for debugging)
+ * Requires admin authentication to prevent abuse.
  */
 export async function POST() {
     console.log('[INIT-API] Force restart requested');
+    
+    // Require admin authentication for restart functionality
+    const user = await getCurrentUser();
+    if (!user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    const isAdmin = await isUserAdmin(user.id);
+    if (!isAdmin) {
+        return NextResponse.json({ error: 'Forbidden - Admin access required' }, { status: 403 });
+    }
     
     const errors: string[] = [];
     

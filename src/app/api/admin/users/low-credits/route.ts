@@ -30,7 +30,9 @@ export async function GET(request: Request) {
         }
 
         const { searchParams } = new URL(request.url);
-        const threshold = parseInt(searchParams.get('threshold') || '1000', 10);
+        // Apply reasonable bounds to threshold
+        const rawThreshold = parseInt(searchParams.get('threshold') || '1000', 10);
+        const threshold = Math.min(Math.max(0, rawThreshold), 1000000); // Between 0 and 1M
 
         const supabase = createServiceClient();
 

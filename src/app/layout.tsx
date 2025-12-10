@@ -3,7 +3,6 @@ import { Inter, Geist_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import Sidebar from "../components/Sidebar";
 import { AuthProvider } from "../components/AuthProvider";
-import FloatingCreditBar from "../components/FloatingCreditBar";
 import "./globals.css";
 
 const inter = Inter({
@@ -37,7 +36,6 @@ export default function RootLayout({
           <main className="flex-1 overflow-y-auto h-screen min-w-0">
             {children}
           </main>
-          <FloatingCreditBar />
         </AuthProvider>
         <Analytics />
       </body>

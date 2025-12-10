@@ -12,6 +12,7 @@ Copy this template to `.env.local` (development) or `.env.production` (productio
 # =============================================================================
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key   # server-only (Railway/API)
 
 # =============================================================================
 # REQUIRED - Scraper Mode
@@ -71,6 +72,7 @@ RESEND_FROM_EMAIL=noreply@atlasv2.com
 |----------|----------|-------------|
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | Your Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anonymous/public key |
+| `SUPABASE_SERVICE_ROLE_KEY` | For server | Supabase service role key (never expose to client; set on Railway/server only) |
 
 ### Scraper Configuration
 

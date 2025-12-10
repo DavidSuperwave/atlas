@@ -65,6 +65,15 @@ const POLL_INTERVAL = 3000; // 3 seconds
 /** Maximum time a scrape can run before being considered stuck */
 const MAX_SCRAPE_DURATION = 60 * 60 * 1000; // 60 minutes for up to 50 pages
 
+/** Time without heartbeat before session is considered stale (for sessions WITH heartbeats) */
+const HEARTBEAT_STALE_THRESHOLD = 3 * 60 * 1000; // 3 minutes
+
+/** Grace period for sessions without heartbeats before marking as stale */
+const NO_HEARTBEAT_GRACE_PERIOD = 2 * 60 * 1000; // 2 minutes
+
+/** Manual session stale threshold */
+const MANUAL_STALE_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+
 /** Time estimation constants (in seconds) */
 const TIME_ESTIMATES = {
     /** Browser startup and initialization */
@@ -204,39 +213,122 @@ class ScrapeQueue {
 
     /**
      * Clean up stale sessions on startup
+     * 
+     * Three-tier detection:
+     * 1. Sessions WITH heartbeats: stale if no heartbeat in 3 minutes
+     * 2. Sessions WITHOUT heartbeats but young: stale after 2 minute grace period
+     * 3. Sessions WITHOUT heartbeats and old: stale after 60 minute max duration
+     * 
+     * Also handles:
+     * - Manual sessions (5 minute threshold)
+     * - Orphaned sessions (no corresponding queue item)
+     * - Stuck scrapes exceeding max duration
      */
     private async cleanupStaleSessions(): Promise<void> {
         try {
             const supabase = getSupabase();
             const now = new Date();
-            const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+            const heartbeatCutoff = new Date(now.getTime() - HEARTBEAT_STALE_THRESHOLD);
+            const maxDurationCutoff = new Date(now.getTime() - MAX_SCRAPE_DURATION);
+            const manualStaleCutoff = new Date(now.getTime() - MANUAL_STALE_THRESHOLD);
+            const noHeartbeatCutoff = new Date(now.getTime() - NO_HEARTBEAT_GRACE_PERIOD);
+            
+            console.log(`[SCRAPE-QUEUE] Running stale session cleanup...`);
             
             // Get ALL active sessions to check
             const { data: activeSessions, error: selectError } = await supabase
                 .from('browser_sessions')
-                .select('id, started_at, last_heartbeat')
+                .select('id, started_at, last_heartbeat, scrape_id, profile_id, session_type, user_id')
                 .eq('status', 'active');
             
             if (selectError) {
                 console.warn(`[SCRAPE-QUEUE] Error finding active sessions: ${selectError.message}`);
             } else if (activeSessions && activeSessions.length > 0) {
                 console.log(`[SCRAPE-QUEUE] Found ${activeSessions.length} active browser session(s), checking for stale...`);
+                for (const s of activeSessions) {
+                    const age = s.started_at ? Math.round((now.getTime() - new Date(s.started_at).getTime()) / 1000) : 'unknown';
+                    const lastHb = s.last_heartbeat ? Math.round((now.getTime() - new Date(s.last_heartbeat).getTime()) / 1000) : 'never';
+                    console.log(`[SCRAPE-QUEUE]   Session ${s.id}: type=${s.session_type}, scrape=${s.scrape_id}, age=${age}s, lastHb=${lastHb}s ago`);
+                }
                 
-                // Find stale sessions (use last_heartbeat if available, otherwise started_at)
-                const staleSessions = activeSessions.filter(s => {
-                    const checkTime = s.last_heartbeat || s.started_at;
-                    if (!checkTime) return true; // No timestamp = stale
-                    return new Date(checkTime).getTime() < fiveMinutesAgo.getTime();
-                });
+                const staleSessions: typeof activeSessions = [];
+                
+                for (const s of activeSessions) {
+                    let isStale = false;
+                    let reason = '';
+                    
+                    // Handle manual sessions separately
+                    if (s.session_type === 'manual') {
+                        const checkTime = s.last_heartbeat 
+                            ? new Date(s.last_heartbeat).getTime() 
+                            : new Date(s.started_at).getTime();
+                        if (checkTime < manualStaleCutoff.getTime()) {
+                            isStale = true;
+                            reason = `manual session inactive for ${Math.round((now.getTime() - checkTime) / 60000)} min`;
+                        }
+                    } else {
+                        // Scrape sessions: three-tier detection
+                        if (s.last_heartbeat) {
+                            // Tier 1: Has heartbeats - use shorter threshold (3 min)
+                            if (new Date(s.last_heartbeat).getTime() < heartbeatCutoff.getTime()) {
+                                isStale = true;
+                                reason = `last heartbeat ${Math.round((now.getTime() - new Date(s.last_heartbeat).getTime()) / 60000)} min ago`;
+                            }
+                        } else {
+                            // Tier 2: No heartbeats but young - give 2 minute grace period
+                            // This catches sessions that failed before sending first heartbeat
+                            const startTime = s.started_at ? new Date(s.started_at).getTime() : 0;
+                            if (startTime > 0 && startTime < noHeartbeatCutoff.getTime()) {
+                                isStale = true;
+                                reason = `started ${Math.round((now.getTime() - startTime) / 60000)} min ago, no heartbeats (likely failed)`;
+                            }
+                            // Tier 3: No heartbeats and old - use max duration (60 min)
+                            else if (startTime < maxDurationCutoff.getTime()) {
+                                isStale = true;
+                                reason = `running for ${Math.round((now.getTime() - startTime) / 60000)} min without heartbeats`;
+                            }
+                        }
+                    }
+                    
+                    if (isStale) {
+                        console.log(`[SCRAPE-QUEUE] Session ${s.id} stale: ${reason}`);
+                        staleSessions.push(s);
+                    }
+                }
                 
                 if (staleSessions.length > 0) {
                     console.log(`[SCRAPE-QUEUE] Cleaning up ${staleSessions.length} stale browser session(s)...`);
                     
                     for (const session of staleSessions) {
+                        // Close the browser session
                         await supabase
                             .from('browser_sessions')
-                            .update({ status: 'completed', ended_at: now.toISOString() })
+                            .update({ status: 'error', ended_at: now.toISOString() })
                             .eq('id', session.id);
+                        
+                        // Also reset the associated scrape if it exists and is running
+                        if (session.scrape_id) {
+                            // Mark queue item as failed (not pending - we don't want infinite retries)
+                            await supabase
+                                .from('scrape_queue')
+                                .update({ 
+                                    status: 'failed', 
+                                    completed_at: now.toISOString(),
+                                    error_message: 'Session timed out (no heartbeat)'
+                                })
+                                .eq('scrape_id', session.scrape_id)
+                                .eq('status', 'running');
+                            
+                            // Mark scrape as failed
+                            await supabase
+                                .from('scrapes')
+                                .update({ 
+                                    status: 'failed',
+                                    error_details: { message: 'Session timed out', timestamp: now.toISOString() }
+                                })
+                                .eq('id', session.scrape_id)
+                                .eq('status', 'running');
+                        }
                     }
                     console.log(`[SCRAPE-QUEUE] ✓ Stale sessions cleaned`);
                 } else {
@@ -244,26 +336,109 @@ class ScrapeQueue {
                 }
             }
             
-            // Also check for stuck 'running' scrapes
+            // Also check for stuck 'running' scrapes without active browser sessions
+            // These are orphaned queue items where the browser session was closed but queue wasn't updated
             const { data: stuckScrapes } = await supabase
                 .from('scrape_queue')
                 .select('id, scrape_id')
                 .eq('status', 'running')
-                .lt('started_at', fiveMinutesAgo.toISOString());
+                .lt('started_at', maxDurationCutoff.toISOString());
             
             if (stuckScrapes && stuckScrapes.length > 0) {
-                console.log(`[SCRAPE-QUEUE] Found ${stuckScrapes.length} stuck scrape(s), resetting to pending...`);
+                console.log(`[SCRAPE-QUEUE] Found ${stuckScrapes.length} stuck scrape(s) exceeding max duration, marking as failed...`);
                 for (const stuck of stuckScrapes) {
+                    // Mark as failed - these have been running too long
                     await supabase
                         .from('scrape_queue')
-                        .update({ status: 'pending', started_at: null })
+                        .update({ 
+                            status: 'failed', 
+                            completed_at: now.toISOString(),
+                            error_message: 'Exceeded maximum scrape duration'
+                        })
                         .eq('id', stuck.id);
+                    
                     await supabase
                         .from('scrapes')
-                        .update({ status: 'queued' })
+                        .update({ 
+                            status: 'failed',
+                            error_details: { message: 'Exceeded maximum scrape duration', timestamp: now.toISOString() }
+                        })
                         .eq('id', stuck.scrape_id);
+                    
+                    // Also close any lingering browser session for this scrape
+                    await supabase
+                        .from('browser_sessions')
+                        .update({ status: 'error', ended_at: now.toISOString() })
+                        .eq('scrape_id', stuck.scrape_id)
+                        .eq('status', 'active');
                 }
-                console.log(`[SCRAPE-QUEUE] ✓ Stuck scrapes reset`);
+                console.log(`[SCRAPE-QUEUE] ✓ Stuck scrapes marked as failed`);
+            }
+            
+            // Check for duplicate browser sessions (multiple active sessions for same scrape)
+            // This can happen due to race conditions in the queue processor
+            const { data: allActiveScrapes } = await supabase
+                .from('browser_sessions')
+                .select('id, scrape_id, started_at')
+                .eq('status', 'active')
+                .eq('session_type', 'scrape')
+                .not('scrape_id', 'is', null);
+            
+            if (allActiveScrapes && allActiveScrapes.length > 0) {
+                // Group by scrape_id
+                const sessionsByScrape = new Map<string, typeof allActiveScrapes>();
+                for (const session of allActiveScrapes) {
+                    const existing = sessionsByScrape.get(session.scrape_id) || [];
+                    existing.push(session);
+                    sessionsByScrape.set(session.scrape_id, existing);
+                }
+                
+                // Close duplicate sessions (keep only the oldest one per scrape)
+                for (const [scrapeId, sessions] of sessionsByScrape) {
+                    if (sessions.length > 1) {
+                        console.log(`[SCRAPE-QUEUE] Found ${sessions.length} duplicate sessions for scrape ${scrapeId}, closing extras...`);
+                        // Sort by started_at, keep the oldest
+                        sessions.sort((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime());
+                        const duplicates = sessions.slice(1); // All except the oldest
+                        
+                        for (const dup of duplicates) {
+                            await supabase
+                                .from('browser_sessions')
+                                .update({ status: 'error', ended_at: now.toISOString() })
+                                .eq('id', dup.id);
+                            console.log(`[SCRAPE-QUEUE]   Closed duplicate session ${dup.id}`);
+                        }
+                    }
+                }
+            }
+            
+            // Check for orphaned browser sessions without corresponding queue items
+            // These can happen if a scrape fails before creating a queue item
+            const { data: orphanedSessions } = await supabase
+                .from('browser_sessions')
+                .select('id, scrape_id, profile_id, started_at')
+                .eq('status', 'active')
+                .eq('session_type', 'scrape')
+                .not('scrape_id', 'is', null);
+            
+            if (orphanedSessions && orphanedSessions.length > 0) {
+                for (const session of orphanedSessions) {
+                    // Check if there's a corresponding queue item
+                    const { data: queueItem } = await supabase
+                        .from('scrape_queue')
+                        .select('id, status')
+                        .eq('scrape_id', session.scrape_id)
+                        .single();
+                    
+                    // If no queue item exists, or if it's completed/failed, close the session
+                    if (!queueItem || queueItem.status === 'completed' || queueItem.status === 'failed' || queueItem.status === 'cancelled') {
+                        console.log(`[SCRAPE-QUEUE] Found orphaned browser session ${session.id} for scrape ${session.scrape_id}, closing...`);
+                        await supabase
+                            .from('browser_sessions')
+                            .update({ status: 'error', ended_at: now.toISOString() })
+                            .eq('id', session.id);
+                    }
+                }
             }
         } catch (error) {
             console.warn(`[SCRAPE-QUEUE] Startup cleanup error:`, error);
@@ -344,6 +519,11 @@ class ScrapeQueue {
     /**
      * Check if a specific profile is available for scraping
      * 
+     * Uses same three-tier detection as cleanupStaleSessions():
+     * 1. Sessions WITH heartbeats: stale if no heartbeat in 3 minutes
+     * 2. Sessions WITHOUT heartbeats but young: stale after 2 minute grace period
+     * 3. Sessions WITHOUT heartbeats and old: stale after 60 minute max duration
+     * 
      * @param profileId - The GoLogin profile ID to check (if not provided, checks any)
      */
     async getBrowserState(profileId?: string): Promise<{ state: BrowserState; session?: { user_id: string; session_type: string; profile_id?: string } }> {
@@ -372,31 +552,92 @@ class ScrapeQueue {
             return { state: 'available' };
         }
 
-        // Check if session is stale (no heartbeat in 5 minutes for more responsive cleanup)
-        const lastHeartbeat = activeSession.last_heartbeat 
-            ? new Date(activeSession.last_heartbeat).getTime() 
-            : new Date(activeSession.started_at).getTime();
+        // Check if session is stale using three-tier detection
         const now = Date.now();
         
-        // Reduced to 5 minutes for faster cleanup of stale sessions
-        const STALE_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+        let isStale = false;
+        let staleReason = '';
         
-        if (now - lastHeartbeat > STALE_THRESHOLD) {
-            console.log(`[SCRAPE-QUEUE] Clearing stale browser session: ${activeSession.id} (profile: ${activeSession.profile_id}, last heartbeat: ${Math.round((now - lastHeartbeat) / 60000)} min ago)`);
+        if (activeSession.session_type === 'manual') {
+            // Manual sessions: use last_heartbeat or started_at, 5 min threshold
+            const checkTime = activeSession.last_heartbeat 
+                ? new Date(activeSession.last_heartbeat).getTime() 
+                : new Date(activeSession.started_at).getTime();
+            if (now - checkTime > MANUAL_STALE_THRESHOLD) {
+                isStale = true;
+                staleReason = `manual session inactive for ${Math.round((now - checkTime) / 60000)} min`;
+            }
+        } else {
+            // Scrape sessions: three-tier detection
+            if (activeSession.last_heartbeat) {
+                // Tier 1: Has heartbeats - use shorter threshold (3 min)
+                const lastHb = new Date(activeSession.last_heartbeat).getTime();
+                if (now - lastHb > HEARTBEAT_STALE_THRESHOLD) {
+                    isStale = true;
+                    staleReason = `no heartbeat for ${Math.round((now - lastHb) / 60000)} min`;
+                }
+            } else {
+                // Tier 2: No heartbeats but young - give 2 minute grace period
+                const startTime = new Date(activeSession.started_at).getTime();
+                if (now - startTime > NO_HEARTBEAT_GRACE_PERIOD && now - startTime < MAX_SCRAPE_DURATION) {
+                    isStale = true;
+                    staleReason = `started ${Math.round((now - startTime) / 60000)} min ago, no heartbeats (likely failed)`;
+                }
+                // Tier 3: No heartbeats and old - use max duration (60 min)
+                else if (now - startTime > MAX_SCRAPE_DURATION) {
+                    isStale = true;
+                    staleReason = `running for ${Math.round((now - startTime) / 60000)} min without heartbeats`;
+                }
+            }
+        }
+        
+        if (isStale) {
+            console.log(`[SCRAPE-QUEUE] Clearing stale browser session: ${activeSession.id} (profile: ${activeSession.profile_id}, reason: ${staleReason})`);
             await supabase
                 .from('browser_sessions')
-                .update({ status: 'completed', ended_at: new Date().toISOString() })
+                .update({ status: 'error', ended_at: new Date().toISOString() })
                 .eq('id', activeSession.id);
+            
+            // Also fail the associated scrape if exists
+            if (activeSession.scrape_id) {
+                await supabase
+                    .from('scrape_queue')
+                    .update({ 
+                        status: 'failed', 
+                        completed_at: new Date().toISOString(),
+                        error_message: `Session stale: ${staleReason}`
+                    })
+                    .eq('scrape_id', activeSession.scrape_id)
+                    .eq('status', 'running');
+                
+                await supabase
+                    .from('scrapes')
+                    .update({ 
+                        status: 'failed',
+                        error_details: { message: `Session stale: ${staleReason}`, timestamp: new Date().toISOString() }
+                    })
+                    .eq('id', activeSession.scrape_id)
+                    .eq('status', 'running');
+            }
+            
             return { state: 'available' };
         }
 
         if (activeSession.session_type === 'manual') {
+            console.log(`[SCRAPE-QUEUE] getBrowserState: Found active MANUAL session ${activeSession.id} for profile ${activeSession.profile_id}`);
             return { 
                 state: 'manual_use', 
                 session: { user_id: activeSession.user_id, session_type: 'manual', profile_id: activeSession.profile_id } 
             };
         }
 
+        // Session is active and not stale - profile is in use
+        const sessionAge = Math.round((now - new Date(activeSession.started_at).getTime()) / 1000);
+        const lastHbAge = activeSession.last_heartbeat 
+            ? Math.round((now - new Date(activeSession.last_heartbeat).getTime()) / 1000)
+            : 'never';
+        console.log(`[SCRAPE-QUEUE] getBrowserState: Found active SCRAPE session ${activeSession.id} for profile ${activeSession.profile_id}, scrape=${activeSession.scrape_id}, age=${sessionAge}s, lastHb=${lastHbAge}s ago`);
+        
         return { 
             state: 'scraping', 
             session: { user_id: activeSession.user_id, session_type: 'scrape', profile_id: activeSession.profile_id } 
@@ -404,32 +645,70 @@ class ScrapeQueue {
     }
 
     /**
-     * Get the next pending scrape from the queue
+     * Atomically claim the next pending scrape from the queue
+     * 
+     * This prevents race conditions where multiple processor instances
+     * try to process the same item simultaneously.
+     * 
+     * Uses UPDATE ... WHERE status='pending' RETURNING to ensure only one
+     * instance can claim each item.
      */
-    async getNextPendingScrape(): Promise<ScrapeQueueItem | null> {
+    async claimNextPendingScrape(): Promise<ScrapeQueueItem | null> {
         const supabase = getSupabase();
-        const { data, error } = await supabase
+        
+        // First, find the next pending item
+        const { data: pendingItem, error: findError } = await supabase
             .from('scrape_queue')
-            .select('*')
+            .select('id')
             .eq('status', 'pending')
             .order('priority', { ascending: false })
             .order('created_at', { ascending: true })
             .limit(1)
             .single();
 
-        if (error) {
+        if (findError) {
             // PGRST116 = no rows returned (which is normal when queue is empty)
-            if (error.code !== 'PGRST116') {
-                console.error(`[SCRAPE-QUEUE] Error fetching pending scrape: ${error.message} (code: ${error.code})`);
+            if (findError.code !== 'PGRST116') {
+                console.error(`[SCRAPE-QUEUE] Error fetching pending scrape: ${findError.message} (code: ${findError.code})`);
             }
             return null;
         }
 
-        if (!data) {
+        if (!pendingItem) {
             return null;
         }
 
-        return data as ScrapeQueueItem;
+        // Now atomically claim it by updating status to 'running'
+        // Only one instance will succeed due to the status='pending' condition
+        const { data: claimedItem, error: claimError } = await supabase
+            .from('scrape_queue')
+            .update({ 
+                status: 'running', 
+                started_at: new Date().toISOString() 
+            })
+            .eq('id', pendingItem.id)
+            .eq('status', 'pending') // Critical: only update if still pending
+            .select('*')
+            .single();
+
+        if (claimError) {
+            // PGRST116 = no rows updated (another instance claimed it first)
+            if (claimError.code === 'PGRST116') {
+                console.log(`[SCRAPE-QUEUE] Queue item ${pendingItem.id} was claimed by another instance`);
+                return null;
+            }
+            console.error(`[SCRAPE-QUEUE] Error claiming scrape: ${claimError.message} (code: ${claimError.code})`);
+            return null;
+        }
+
+        if (!claimedItem) {
+            // Another instance claimed it first
+            console.log(`[SCRAPE-QUEUE] Queue item ${pendingItem.id} was claimed by another instance`);
+            return null;
+        }
+
+        console.log(`[SCRAPE-QUEUE] ✓ Claimed queue item: ${claimedItem.id} for scrape ${claimedItem.scrape_id}`);
+        return claimedItem as ScrapeQueueItem;
     }
 
     /**
@@ -447,6 +726,13 @@ class ScrapeQueue {
             return null;
         }
 
+        // Safety check: Don't process scrapes that require admin approval
+        // These are for scrape-only users and should be processed manually
+        if (data.requires_admin_approval === true) {
+            console.log(`[SCRAPE-QUEUE] Skipping scrape ${scrapeId} - requires admin approval`);
+            return null;
+        }
+
         return data as ScrapeRecord;
     }
 
@@ -459,17 +745,58 @@ class ScrapeQueue {
             return;
         }
 
+        // Declare browserSession outside try block so it's accessible in catch/finally
+        let browserSession: { id: string } | null = null;
+
         try {
             const supabase = getSupabase();
             
-            // Get next pending scrape first (to know which user/profile we need)
-            const nextItem = await this.getNextPendingScrape();
+            // DEBUG: Check queue and session state periodically
+            // Get counts for debugging
+            const { count: pendingCount } = await supabase
+                .from('scrape_queue')
+                .select('*', { count: 'exact', head: true })
+                .eq('status', 'pending');
+            
+            const { count: runningCount } = await supabase
+                .from('scrape_queue')
+                .select('*', { count: 'exact', head: true })
+                .eq('status', 'running');
+            
+            const { data: activeSessions } = await supabase
+                .from('browser_sessions')
+                .select('id, profile_id, scrape_id, started_at, last_heartbeat, session_type')
+                .eq('status', 'active');
+            
+            // Log state if there are pending items or active sessions
+            if ((pendingCount && pendingCount > 0) || (activeSessions && activeSessions.length > 0)) {
+                console.log(`[SCRAPE-QUEUE] Queue state: ${pendingCount || 0} pending, ${runningCount || 0} running, ${activeSessions?.length || 0} active browser sessions`);
+                if (activeSessions && activeSessions.length > 0) {
+                    for (const session of activeSessions) {
+                        const age = session.started_at 
+                            ? Math.round((Date.now() - new Date(session.started_at).getTime()) / 1000)
+                            : 'unknown';
+                        const lastHb = session.last_heartbeat
+                            ? Math.round((Date.now() - new Date(session.last_heartbeat).getTime()) / 1000)
+                            : 'never';
+                        console.log(`[SCRAPE-QUEUE]   Session ${session.id}: profile=${session.profile_id}, scrape=${session.scrape_id}, type=${session.session_type}, age=${age}s, lastHb=${lastHb}s ago`);
+                    }
+                }
+            }
+            
+            // Atomically claim the next pending scrape
+            // This prevents race conditions where multiple instances try to process the same item
+            const nextItem = await this.claimNextPendingScrape();
             if (!nextItem) {
-                // No pending scrapes
+                // No pending scrapes or another instance claimed it
                 return;
             }
             
-            console.log(`[SCRAPE-QUEUE] Found pending item: scrape_id=${nextItem.scrape_id}, user_id=${nextItem.user_id}`);
+            console.log(`[SCRAPE-QUEUE] Processing claimed item: scrape_id=${nextItem.scrape_id}, user_id=${nextItem.user_id}`);
+            
+            // Mark as processing (local flag for this instance)
+            this.isProcessing = true;
+            this.currentScrapeId = nextItem.scrape_id;
             
             // Look up the profile that will be used for this user
             const profileResult = await getProfileForUser(nextItem.user_id);
@@ -485,6 +812,8 @@ class ScrapeQueue {
                     status: 'failed',
                     error_details: { message: profileResult.error || 'No GoLogin profile assigned' }
                 }).eq('id', nextItem.scrape_id);
+                this.isProcessing = false;
+                this.currentScrapeId = null;
                 return;
             }
             
@@ -493,28 +822,21 @@ class ScrapeQueue {
             // Check if THIS specific profile is available
             const { state, session } = await this.getBrowserState(profileResult.profileId);
             if (state !== 'available') {
-                // This profile is in use, skip this cycle
-                console.log(`[SCRAPE-QUEUE] Profile ${profileResult.profileId} not available (state: ${state}), session: ${JSON.stringify(session)}`);
+                // This profile is in use - put item back to pending
+                console.log(`[SCRAPE-QUEUE] Profile ${profileResult.profileId} not available (state: ${state}), returning item to queue`);
+                await supabase.from('scrape_queue').update({ 
+                    status: 'pending',
+                    started_at: null
+                }).eq('id', nextItem.id);
+                this.isProcessing = false;
+                this.currentScrapeId = null;
                 return;
             }
 
-            // Mark as processing
-            this.isProcessing = true;
-            this.currentScrapeId = nextItem.scrape_id;
-
-            console.log(`[SCRAPE-QUEUE] Processing scrape: ${nextItem.scrape_id}`);
-
-            // Update queue status to running
-            await supabase
-                .from('scrape_queue')
-                .update({ 
-                    status: 'running', 
-                    started_at: new Date().toISOString() 
-                })
-                .eq('id', nextItem.id);
+            console.log(`[SCRAPE-QUEUE] Starting scrape: ${nextItem.scrape_id}`);
 
             // Create browser session record with the ACTUAL profile being used
-            const { data: browserSession } = await supabase
+            const { data: sessionData } = await supabase
                 .from('browser_sessions')
                 .insert({
                     profile_id: profileResult.profileId,
@@ -525,6 +847,8 @@ class ScrapeQueue {
                 })
                 .select()
                 .single();
+            
+            browserSession = sessionData;
 
             // Get scrape details
             const scrapeDetails = await this.getScrapeDetails(nextItem.scrape_id);
@@ -618,7 +942,33 @@ class ScrapeQueue {
                         })
                         .eq('id', this.currentScrapeId);
 
-                    // Close any active browser session for this scrape
+                } catch (updateError) {
+                    console.error('[SCRAPE-QUEUE] Failed to update status after error:', updateError);
+                }
+            }
+
+        } finally {
+            // ALWAYS close browser session if it was created, even if other cleanup failed
+            if (browserSession) {
+                try {
+                    const supabase = getSupabase();
+                    await supabase
+                        .from('browser_sessions')
+                        .update({ 
+                            status: 'error',
+                            ended_at: new Date().toISOString() 
+                        })
+                        .eq('id', browserSession.id)
+                        .eq('status', 'active'); // Only update if still active
+                } catch (sessionError) {
+                    console.error('[SCRAPE-QUEUE] Failed to close browser session in finally block:', sessionError);
+                }
+            }
+            
+            // Also ensure any active session for this scrape is closed (fallback)
+            if (this.currentScrapeId) {
+                try {
+                    const supabase = getSupabase();
                     await supabase
                         .from('browser_sessions')
                         .update({ 
@@ -627,12 +977,11 @@ class ScrapeQueue {
                         })
                         .eq('scrape_id', this.currentScrapeId)
                         .eq('status', 'active');
-                } catch (updateError) {
-                    console.error('[SCRAPE-QUEUE] Failed to update status after error:', updateError);
+                } catch (fallbackError) {
+                    console.error('[SCRAPE-QUEUE] Failed to close browser session (fallback):', fallbackError);
                 }
             }
-
-        } finally {
+            
             this.isProcessing = false;
             this.currentScrapeId = null;
         }

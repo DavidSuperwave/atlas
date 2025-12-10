@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser, getUserProfile } from '@/lib/supabase-server';
+import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
 
 // Email validation regex
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -34,6 +35,18 @@ export async function POST(request: NextRequest) {
             return NextResponse.json(
                 { error: 'Unauthorized' },
                 { status: 401 }
+            );
+        }
+
+        // Rate limit per user for verification uploads
+        const rateLimit = checkRateLimit(user.id, RATE_LIMITS.VERIFY_EMAILS);
+        if (rateLimit.limited) {
+            return NextResponse.json(
+                { error: 'Rate limit exceeded', retryAfter: rateLimit.resetInSeconds },
+                {
+                    status: 429,
+                    headers: { 'Retry-After': rateLimit.resetInSeconds.toString() }
+                }
             );
         }
 

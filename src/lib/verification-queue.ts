@@ -3,11 +3,19 @@ import { enrichLead, MailTesterResponse } from './mailtester';
 import { deductCredits, checkCredits } from './credits';
 import { apiKeyPool, ApiKeyPool } from './api-key-pool';
 
-// Use service role key to bypass RLS for server-side operations
-const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// SECURITY: Service role key is REQUIRED for verification operations
+// These operations need to bypass RLS to manage verifications across users
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl) {
+    throw new Error('[VERIFICATION-QUEUE] NEXT_PUBLIC_SUPABASE_URL is not configured');
+}
+if (!serviceRoleKey) {
+    throw new Error('[VERIFICATION-QUEUE] SUPABASE_SERVICE_ROLE_KEY is required for verification operations');
+}
+
+const supabase = createClient(supabaseUrl, serviceRoleKey);
 
 // Rate limit: 170 emails per 30 seconds = ~176ms per request
 // Using 180ms to be safe
@@ -420,7 +428,7 @@ export class VerificationQueue {
                 creditsUsed = 1;
                 console.log(`[WORKER-${worker.id}] Deducted 1 credit from user ${item.userId}`);
             } catch (creditError) {
-                console.error('[WORKER-${worker.id}] Failed to deduct credits:', creditError);
+                console.error(`[WORKER-${worker.id}] Failed to deduct credits:`, creditError);
             }
         }
 

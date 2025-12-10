@@ -466,6 +466,39 @@ export class GoLoginClient {
     }
 
     /**
+     * Stop a cloud browser session (manual access)
+     * Uses GoLogin cloud API endpoint: DELETE /browser/{id}/web
+     */
+    async stopCloudBrowser(profileId?: string): Promise<{ success: boolean; error?: string }> {
+        const id = profileId || this.profileId;
+        if (!id) {
+            return { success: false, error: 'Profile ID is required' };
+        }
+
+        try {
+            const response = await fetch(`${GOLOGIN_API_URL}/browser/${id}/web`, {
+                method: 'DELETE',
+                headers: this.getHeaders(),
+            });
+
+            // 404 means already stopped/not found - treat as success
+            if (!response.ok && response.status !== 404) {
+                const errorText = await response.text();
+                throw new Error(`HTTP error ${response.status}: ${errorText}`);
+            }
+
+            // Remove cached running profile if present
+            this.runningProfiles.delete(id);
+
+            return { success: true };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error(`[GOLOGIN-CLIENT] Error stopping cloud browser ${id}:`, errorMessage);
+            return { success: false, error: errorMessage };
+        }
+    }
+
+    /**
      * Check if a profile is currently running
      * 
      * @param profileId - Profile ID to check (uses default if not provided)

@@ -23,6 +23,24 @@ interface User {
     requested_credits_plan: string | null;
 }
 
+interface ScrapeSignupLink {
+    id: string;
+    token: string;
+    created_at: string;
+    expires_at: string;
+    used_at: string | null;
+    creator: { id: string; email: string; name: string | null } | null;
+    used_by_user: { id: string; email: string; name: string | null } | null;
+}
+
+interface ScrapeSignupLinkStats {
+    total: number;
+    used: number;
+    unused: number;
+    expired: number;
+    active: number;
+}
+
 export default function UsersPage() {
     const { user, loading: authLoading } = useAuth();
     const [users, setUsers] = useState<User[]>([]);
@@ -34,6 +52,13 @@ export default function UsersPage() {
     // Invite form
     const [sendingInvite, setSendingInvite] = useState(false);
     const [newEmail, setNewEmail] = useState('');
+    
+    // Scrape signup links
+    const [scrapeSignupLinks, setScrapeSignupLinks] = useState<ScrapeSignupLink[]>([]);
+    const [scrapeSignupStats, setScrapeSignupStats] = useState<ScrapeSignupLinkStats | null>(null);
+    const [generatingLink, setGeneratingLink] = useState(false);
+    const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
+    const [showScrapeLinks, setShowScrapeLinks] = useState(false);
     
     // Filter
     const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'disabled'>('all');
@@ -59,11 +84,89 @@ export default function UsersPage() {
         }
     }, []);
 
+    const fetchScrapeSignupLinks = useCallback(async () => {
+        try {
+            const res = await fetch('/api/admin/scrape-signup-links');
+            if (res.ok) {
+                const data = await res.json();
+                setScrapeSignupLinks(data.links || []);
+                setScrapeSignupStats(data.stats || null);
+            }
+        } catch (err) {
+            console.error('Failed to fetch scrape signup links:', err);
+        }
+    }, []);
+
     useEffect(() => {
         if (!authLoading && user) {
             fetchUsers();
+            fetchScrapeSignupLinks();
         }
-    }, [user, authLoading, fetchUsers]);
+    }, [user, authLoading, fetchUsers, fetchScrapeSignupLinks]);
+
+    async function handleGenerateScrapeLink() {
+        setGeneratingLink(true);
+        setActionMessage(null);
+
+        try {
+            const res = await fetch('/api/admin/scrape-signup-links', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ expiresInDays: 7 }),
+            });
+
+            const data = await res.json();
+
+            if (!res.ok) {
+                setActionMessage({ type: 'error', text: data.error || 'Failed to generate link' });
+                return;
+            }
+
+            setActionMessage({ type: 'success', text: 'Scrape signup link generated! Click to copy.' });
+            fetchScrapeSignupLinks();
+            
+            // Auto-copy the new link
+            await navigator.clipboard.writeText(data.link.signupUrl);
+            setCopiedLinkId(data.link.id);
+            setTimeout(() => setCopiedLinkId(null), 3000);
+        } catch (err) {
+            setActionMessage({ type: 'error', text: 'Failed to generate link' });
+        } finally {
+            setGeneratingLink(false);
+        }
+    }
+
+    async function handleCopyLink(linkId: string, token: string) {
+        const baseUrl = window.location.origin;
+        const signupUrl = `${baseUrl}/signup-scrape?token=${token}`;
+        
+        try {
+            await navigator.clipboard.writeText(signupUrl);
+            setCopiedLinkId(linkId);
+            setTimeout(() => setCopiedLinkId(null), 3000);
+        } catch (err) {
+            console.error('Failed to copy:', err);
+        }
+    }
+
+    async function handleDeleteScrapeLink(linkId: string) {
+        try {
+            const res = await fetch(`/api/admin/scrape-signup-links?id=${linkId}`, {
+                method: 'DELETE',
+            });
+
+            if (!res.ok) {
+                const data = await res.json();
+                setActionMessage({ type: 'error', text: data.error || 'Failed to delete link' });
+                return;
+            }
+
+            setActionMessage({ type: 'success', text: 'Link deleted' });
+            fetchScrapeSignupLinks();
+        } catch (err) {
+            setActionMessage({ type: 'error', text: 'Failed to delete link' });
+        }
+    }
 
     async function handleSendInvite(e: React.FormEvent) {
         e.preventDefault();
@@ -327,27 +430,150 @@ export default function UsersPage() {
                     </div>
                 </div>
 
-                {/* Send Invite Form */}
-                <div className="bg-white rounded-xl border border-gray-200 p-6 mb-8">
-                    <h2 className="text-lg font-semibold text-gray-900 mb-4">Send New Invite</h2>
-                    <form onSubmit={handleSendInvite} className="flex gap-4">
-                        <input
-                            type="email"
-                            value={newEmail}
-                            onChange={(e) => setNewEmail(e.target.value)}
-                            placeholder="Enter email address"
-                            required
-                            className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-base"
-                        />
-                        <button
-                            type="submit"
-                            disabled={sendingInvite}
-                            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            {sendingInvite ? 'Sending...' : 'Send Invite'}
-                        </button>
-                    </form>
+                {/* Invite Options */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                    {/* Send Full App Invite */}
+                    <div className="bg-white rounded-xl border border-gray-200 p-6">
+                        <h2 className="text-lg font-semibold text-gray-900 mb-2">Full App Invite</h2>
+                        <p className="text-sm text-gray-500 mb-4">Invite users to the full application with all features</p>
+                        <form onSubmit={handleSendInvite} className="flex gap-4">
+                            <input
+                                type="email"
+                                value={newEmail}
+                                onChange={(e) => setNewEmail(e.target.value)}
+                                placeholder="Enter email address"
+                                required
+                                className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-base"
+                            />
+                            <button
+                                type="submit"
+                                disabled={sendingInvite}
+                                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {sendingInvite ? 'Sending...' : 'Send Invite'}
+                            </button>
+                        </form>
+                    </div>
+
+                    {/* Generate Scrape Signup Link */}
+                    <div className="bg-white rounded-xl border border-gray-200 p-6">
+                        <h2 className="text-lg font-semibold text-gray-900 mb-2">Scrape-Only Signup Link</h2>
+                        <p className="text-sm text-gray-500 mb-4">Generate a link for one-off scrape customers</p>
+                        <div className="flex gap-4">
+                            <button
+                                onClick={handleGenerateScrapeLink}
+                                disabled={generatingLink}
+                                className="flex-1 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {generatingLink ? 'Generating...' : 'Generate Link'}
+                            </button>
+                            <button
+                                onClick={() => setShowScrapeLinks(!showScrapeLinks)}
+                                className="px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors"
+                            >
+                                {showScrapeLinks ? 'Hide' : 'View'} Links
+                                {scrapeSignupStats && (
+                                    <span className="ml-2 text-xs bg-gray-200 px-2 py-0.5 rounded-full">
+                                        {scrapeSignupStats.active} active
+                                    </span>
+                                )}
+                            </button>
+                        </div>
+                    </div>
                 </div>
+
+                {/* Scrape Signup Links List */}
+                {showScrapeLinks && (
+                    <div className="bg-white rounded-xl border border-gray-200 p-6 mb-8">
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-lg font-semibold text-gray-900">Scrape Signup Links</h2>
+                            {scrapeSignupStats && (
+                                <div className="flex gap-4 text-sm">
+                                    <span className="text-gray-500">Total: <strong className="text-gray-900">{scrapeSignupStats.total}</strong></span>
+                                    <span className="text-green-600">Active: <strong>{scrapeSignupStats.active}</strong></span>
+                                    <span className="text-blue-600">Used: <strong>{scrapeSignupStats.used}</strong></span>
+                                    <span className="text-amber-600">Expired: <strong>{scrapeSignupStats.expired}</strong></span>
+                                </div>
+                            )}
+                        </div>
+
+                        {scrapeSignupLinks.length === 0 ? (
+                            <div className="text-center py-8 text-gray-500">
+                                No signup links generated yet
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                {scrapeSignupLinks.map((link) => {
+                                    const isExpired = new Date(link.expires_at) < new Date();
+                                    const isUsed = !!link.used_at;
+                                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+                                    const signupUrl = `${baseUrl}/signup-scrape?token=${link.token}`;
+
+                                    return (
+                                        <div
+                                            key={link.id}
+                                            className={`flex items-center justify-between p-4 rounded-lg border ${
+                                                isUsed ? 'bg-blue-50 border-blue-200' :
+                                                isExpired ? 'bg-gray-50 border-gray-200' :
+                                                'bg-green-50 border-green-200'
+                                            }`}
+                                        >
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${
+                                                        isUsed ? 'bg-blue-100 text-blue-700' :
+                                                        isExpired ? 'bg-gray-200 text-gray-600' :
+                                                        'bg-green-100 text-green-700'
+                                                    }`}>
+                                                        {isUsed ? 'Used' : isExpired ? 'Expired' : 'Active'}
+                                                    </span>
+                                                    <span className="text-xs text-gray-500">
+                                                        Created {formatDate(link.created_at)}
+                                                    </span>
+                                                </div>
+                                                <div className="text-sm font-mono text-gray-600 truncate">
+                                                    {signupUrl}
+                                                </div>
+                                                {isUsed && link.used_by_user && (
+                                                    <div className="text-xs text-blue-600 mt-1">
+                                                        Used by: {link.used_by_user.email} on {formatDate(link.used_at)}
+                                                    </div>
+                                                )}
+                                                {!isUsed && !isExpired && (
+                                                    <div className="text-xs text-gray-500 mt-1">
+                                                        Expires: {formatDate(link.expires_at)}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div className="flex items-center gap-2 ml-4">
+                                                {!isUsed && !isExpired && (
+                                                    <button
+                                                        onClick={() => handleCopyLink(link.id, link.token)}
+                                                        className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                                                            copiedLinkId === link.id
+                                                                ? 'bg-green-600 text-white'
+                                                                : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
+                                                        }`}
+                                                    >
+                                                        {copiedLinkId === link.id ? 'Copied!' : 'Copy'}
+                                                    </button>
+                                                )}
+                                                {!isUsed && (
+                                                    <button
+                                                        onClick={() => handleDeleteScrapeLink(link.id)}
+                                                        className="px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 text-xs font-medium rounded-lg transition-colors"
+                                                    >
+                                                        Delete
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* Filter Pills */}
                 <div className="flex gap-2 mb-4">

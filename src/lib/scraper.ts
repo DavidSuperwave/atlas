@@ -42,9 +42,9 @@ import { BrowserManagerLocal } from './browser-manager-local';
 export type { ScrapedLead, ScrapeError, ScraperMode };
 
 /**
- * Extended scraper function type that supports optional userId
+ * Extended scraper function type that supports optional userId and scrapeId
  */
-export type ScraperFunctionWithUser = (url: string, pages?: number, userId?: string) => Promise<ScrapedLead[]>;
+export type ScraperFunctionWithUser = (url: string, pages?: number, userId?: string, scrapeId?: string) => Promise<ScrapedLead[]>;
 
 /**
  * Get the current scraper mode from environment
@@ -126,14 +126,14 @@ export async function getScraper(): Promise<ScraperFunctionWithUser> {
             }
             // Dolphin scraper doesn't support userId, wrap it
             const { scrapeApollo: scrapeApolloDolphin } = await import('./scraper-dolphin');
-            return (url: string, pages?: number, _userId?: string) => 
+            return (url: string, pages?: number, _userId?: string, _scrapeId?: string) => 
                 scrapeApolloDolphin(url, pages);
             
         case 'local':
         default:
             // Local scraper doesn't support userId, wrap it
             const { scrapeApollo: scrapeApolloLocal } = await import('./scraper-local');
-            return (url: string, pages?: number, _userId?: string) => 
+            return (url: string, pages?: number, _userId?: string, _scrapeId?: string) => 
                 scrapeApolloLocal(url, pages);
     }
 }

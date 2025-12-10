@@ -52,8 +52,16 @@ export async function GET(
             return corsJsonResponse({ error: 'Scrape not found' }, request, { status: 404 });
         }
 
-        // Verify ownership
-        if (scrape.user_id !== user.id) {
+        // Verify ownership or admin access
+        const { data: profile } = await supabase
+            .from('user_profiles')
+            .select('is_admin')
+            .eq('id', user.id)
+            .single();
+        
+        const isAdmin = profile?.is_admin === true;
+        
+        if (scrape.user_id !== user.id && !isAdmin) {
             return corsJsonResponse({ error: 'Not authorized' }, request, { status: 403 });
         }
 
@@ -116,7 +124,13 @@ export async function GET(
             // Time estimates
             estimatedTimeRemaining: queueStatus.estimatedTimeRemaining,
             estimatedCompletionTime: queueStatus.estimatedCompletionTime,
-            timeEstimateFormatted: queueStatus.timeEstimateFormatted
+            timeEstimateFormatted: queueStatus.timeEstimateFormatted,
+            // Real-time scraper state
+            scraperStatus: scrape.scraper_status || 'queued',
+            currentPage: scrape.current_page || 0,
+            totalPages: scrape.total_pages || 1,
+            rowsExtracted: scrape.rows_extracted || 0,
+            stateUpdatedAt: scrape.state_updated_at
         }, request);
 
     } catch (error) {

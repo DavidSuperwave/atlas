@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServiceClient, getCurrentUser, isUserAdmin } from '@/lib/supabase-server';
 import { sendEmail } from '@/lib/resend';
 import { generateInviteEmailHtml, generateInviteEmailText } from '@/lib/emails/invite-email';
+import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
 import crypto from 'crypto';
 
 export async function POST(request: Request) {
@@ -14,6 +15,18 @@ export async function POST(request: Request) {
         const isAdmin = await isUserAdmin(user.id);
         if (!isAdmin) {
             return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        }
+
+        // Rate limit by admin user ID (shares limit with send)
+        const rateLimit = checkRateLimit(user.id, RATE_LIMITS.INVITE_SEND);
+        if (rateLimit.limited) {
+            return NextResponse.json(
+                { 
+                    error: `Rate limit exceeded. You can send ${rateLimit.max} invites per hour.`,
+                    resetInSeconds: rateLimit.resetInSeconds,
+                },
+                { status: 429 }
+            );
         }
 
         const body = await request.json();
@@ -115,6 +128,8 @@ export async function POST(request: Request) {
         }
 
         if (!emailSent) {
+            // NOTE: Do NOT include the token in error responses - it's a security risk
+            // If manual sharing is needed, admin should use the invite list endpoint
             return NextResponse.json(
                 { 
                     error: 'Failed to send email',
@@ -123,7 +138,7 @@ export async function POST(request: Request) {
                         id: inviteToUse.id,
                         email: inviteToUse.email,
                         expires_at: expiresAt.toISOString(),
-                        token: inviteToUse.token, // Include token for manual sharing if needed
+                        // Token intentionally omitted for security
                     },
                 },
                 { status: 500 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser, createServiceClient } from '@/lib/supabase-server';
 import { checkCredits } from '@/lib/credits';
 import { verificationQueue } from '@/lib/verification-queue';
+import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
     try {
@@ -11,6 +12,18 @@ export async function POST(request: NextRequest) {
             return NextResponse.json(
                 { error: 'Unauthorized' },
                 { status: 401 }
+            );
+        }
+
+        // Rate limit per user for verification start
+        const rateLimit = checkRateLimit(user.id, RATE_LIMITS.VERIFY_EMAILS);
+        if (rateLimit.limited) {
+            return NextResponse.json(
+                { error: 'Rate limit exceeded', retryAfter: rateLimit.resetInSeconds },
+                {
+                    status: 429,
+                    headers: { 'Retry-After': rateLimit.resetInSeconds.toString() }
+                }
             );
         }
 

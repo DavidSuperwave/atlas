@@ -3,10 +3,19 @@ import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 
 // Server-side Supabase client with service role for admin operations
+// SECURITY: Requires service role key - no fallback to anon key
 export function createServiceClient() {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    
+    if (!serviceRoleKey) {
+        console.error('[SUPABASE-SERVER] CRITICAL: SUPABASE_SERVICE_ROLE_KEY is not set!');
+        console.error('[SUPABASE-SERVER] Service client requires service role key for admin operations.');
+        throw new Error('SUPABASE_SERVICE_ROLE_KEY is required for createServiceClient()');
+    }
+    
     return createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        serviceRoleKey,
         {
             auth: {
                 persistSession: false,

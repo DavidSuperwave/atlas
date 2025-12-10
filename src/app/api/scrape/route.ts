@@ -4,6 +4,7 @@ import { getCurrentUser, createServiceClient } from '@/lib/supabase-server';
 import { handleCors, corsJsonResponse } from '@/lib/cors';
 import { getUserProfileDbId } from '@/lib/gologin-profile-manager';
 import { scrapeQueue } from '@/lib/scrape-queue';
+import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
 
 const supabase = createServiceClient();
 
@@ -50,6 +51,18 @@ export async function POST(request: Request) {
         const user = await getCurrentUser();
         if (!user) {
             return corsJsonResponse({ error: 'Unauthorized' }, request, { status: 401 });
+        }
+
+        // Rate limit per user for scrape creation
+        const rateLimit = checkRateLimit(user.id, RATE_LIMITS.SCRAPE);
+        if (rateLimit.limited) {
+            return corsJsonResponse({
+                error: 'Rate limit exceeded',
+                retryAfter: rateLimit.resetInSeconds
+            }, request, {
+                status: 429,
+                headers: { 'Retry-After': rateLimit.resetInSeconds.toString() }
+            });
         }
 
         const { url, filters, pages = 1, name, tags = [] } = await request.json();

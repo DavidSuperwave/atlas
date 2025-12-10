@@ -114,12 +114,21 @@ export default function ScrapeDetailsPage() {
     // URL copy state
     const [urlCopied, setUrlCopied] = useState(false);
 
-    // Scrape status polling state (for queue position and time estimates)
+    // Pagination state
+    const [currentPage, setCurrentPage] = useState(1);
+    const ITEMS_PER_PAGE = 50;
+
+    // Scrape status polling state (for queue position, progress, and time estimates)
     const [scrapeStatus, setScrapeStatus] = useState<{
         queuePosition?: number;
         timeEstimateFormatted?: string;
         estimatedTimeRemaining?: number;
         message?: string;
+        // Real-time scraper state
+        scraperStatus?: string;
+        currentPage?: number;
+        totalPages?: number;
+        rowsExtracted?: number;
     } | null>(null);
     const scrapePollingRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -194,7 +203,12 @@ export default function ScrapeDetailsPage() {
                     queuePosition: data.queuePosition,
                     timeEstimateFormatted: data.timeEstimateFormatted,
                     estimatedTimeRemaining: data.estimatedTimeRemaining,
-                    message: data.message
+                    message: data.message,
+                    // Real-time scraper state
+                    scraperStatus: data.scraperStatus,
+                    currentPage: data.currentPage,
+                    totalPages: data.totalPages,
+                    rowsExtracted: data.rowsExtracted
                 });
                 
                 // If scrape completed or failed, stop polling and refresh data
@@ -835,11 +849,40 @@ export default function ScrapeDetailsPage() {
                                                 )}
                                                 {scrape.status.toUpperCase()}
                                             </span>
-                                            {/* Time estimate for running/queued scrapes */}
-                                            {scrapeStatus?.message && (scrape.status === 'running' || scrape.status === 'queued') && (
-                                                <span className="text-xs text-gray-500">
-                                                    {scrapeStatus.message}
-                                                </span>
+                                            {/* Real-time scraper progress */}
+                                            {(scrape.status === 'running' || scrape.status === 'queued') && scrapeStatus && (
+                                                <div className="flex items-center gap-3 text-xs text-gray-500">
+                                                    {/* Progress details based on scraper status */}
+                                                    {scrapeStatus.scraperStatus === 'navigating' && (
+                                                        <span>Navigating to Apollo...</span>
+                                                    )}
+                                                    {scrapeStatus.scraperStatus === 'extracting' && scrapeStatus.totalPages && scrapeStatus.totalPages > 0 && (
+                                                        <div className="flex items-center gap-2">
+                                                            <span>Page {scrapeStatus.currentPage || 1} of {scrapeStatus.totalPages}</span>
+                                                            {/* Progress bar */}
+                                                            <div className="w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                                                                <div 
+                                                                    className="h-full bg-blue-500 transition-all duration-300"
+                                                                    style={{ width: `${((scrapeStatus.currentPage || 1) / scrapeStatus.totalPages) * 100}%` }}
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {scrapeStatus.scraperStatus === 'paginating' && (
+                                                        <span>Moving to next page...</span>
+                                                    )}
+                                                    {scrapeStatus.rowsExtracted !== undefined && scrapeStatus.rowsExtracted > 0 && (
+                                                        <span className="text-green-600">{scrapeStatus.rowsExtracted} leads found</span>
+                                                    )}
+                                                    {/* Queue position for queued scrapes */}
+                                                    {scrape.status === 'queued' && scrapeStatus.queuePosition && scrapeStatus.queuePosition > 1 && (
+                                                        <span>Position #{scrapeStatus.queuePosition} in queue</span>
+                                                    )}
+                                                    {/* Fallback message */}
+                                                    {!scrapeStatus.scraperStatus && scrapeStatus.message && (
+                                                        <span>{scrapeStatus.message}</span>
+                                                    )}
+                                                </div>
                                             )}
                                         </div>
                                     )}
@@ -974,7 +1017,7 @@ export default function ScrapeDetailsPage() {
                                     )}
                                 </button>
                             </div>
-                            <p><span className="font-semibold text-gray-700">Date:</span> {new Date(scrape.created_at).toLocaleString()}</p>
+                            <p suppressHydrationWarning><span className="font-semibold text-gray-700">Date:</span> {new Date(scrape.created_at).toLocaleString()}</p>
                         </div>
                     </div>
                 )}
@@ -1007,7 +1050,7 @@ export default function ScrapeDetailsPage() {
                                 ) : leads.length === 0 ? (
                                     <tr><td colSpan={6} className="px-6 py-12 text-center text-gray-500">No leads found.</td></tr>
                                 ) : (
-                                    leads.map((lead) => (
+                                    leads.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE).map((lead) => (
                                         <tr key={lead.id} className="hover:bg-gray-50/80 transition-colors group">
                                             <td className="px-6 py-4">
                                                 <div className="font-medium text-gray-900">{lead.first_name} {lead.last_name}</div>
@@ -1117,6 +1160,81 @@ export default function ScrapeDetailsPage() {
                             </tbody>
                         </table>
                     </div>
+
+                    {/* Pagination Controls */}
+                    {leads.length > ITEMS_PER_PAGE && (
+                        <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+                            <div className="text-sm text-gray-500">
+                                Showing {((currentPage - 1) * ITEMS_PER_PAGE) + 1} to {Math.min(currentPage * ITEMS_PER_PAGE, leads.length)} of {leads.length} leads
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => setCurrentPage(1)}
+                                    disabled={currentPage === 1}
+                                    className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                >
+                                    First
+                                </button>
+                                <button
+                                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                    disabled={currentPage === 1}
+                                    className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                >
+                                    Previous
+                                </button>
+                                <div className="flex items-center gap-1">
+                                    {(() => {
+                                        const totalPages = Math.ceil(leads.length / ITEMS_PER_PAGE);
+                                        const pages: (number | string)[] = [];
+                                        
+                                        if (totalPages <= 7) {
+                                            for (let i = 1; i <= totalPages; i++) pages.push(i);
+                                        } else {
+                                            pages.push(1);
+                                            if (currentPage > 3) pages.push('...');
+                                            for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) {
+                                                pages.push(i);
+                                            }
+                                            if (currentPage < totalPages - 2) pages.push('...');
+                                            pages.push(totalPages);
+                                        }
+                                        
+                                        return pages.map((page, idx) => (
+                                            typeof page === 'number' ? (
+                                                <button
+                                                    key={idx}
+                                                    onClick={() => setCurrentPage(page)}
+                                                    className={`w-8 h-8 text-sm font-medium rounded-lg transition-colors ${
+                                                        currentPage === page
+                                                            ? 'bg-blue-600 text-white'
+                                                            : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                                                    }`}
+                                                >
+                                                    {page}
+                                                </button>
+                                            ) : (
+                                                <span key={idx} className="px-1 text-gray-400">...</span>
+                                            )
+                                        ));
+                                    })()}
+                                </div>
+                                <button
+                                    onClick={() => setCurrentPage(p => Math.min(Math.ceil(leads.length / ITEMS_PER_PAGE), p + 1))}
+                                    disabled={currentPage >= Math.ceil(leads.length / ITEMS_PER_PAGE)}
+                                    className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                >
+                                    Next
+                                </button>
+                                <button
+                                    onClick={() => setCurrentPage(Math.ceil(leads.length / ITEMS_PER_PAGE))}
+                                    disabled={currentPage >= Math.ceil(leads.length / ITEMS_PER_PAGE)}
+                                    className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                >
+                                    Last
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 

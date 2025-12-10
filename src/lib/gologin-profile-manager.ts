@@ -12,11 +12,19 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-// Create Supabase client with service role for server-side operations
-const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+// SECURITY: Service role key is REQUIRED for profile management
+// These operations need to bypass RLS to manage profiles across users
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl) {
+    throw new Error('[PROFILE-MANAGER] NEXT_PUBLIC_SUPABASE_URL is not configured');
+}
+if (!serviceRoleKey) {
+    throw new Error('[PROFILE-MANAGER] SUPABASE_SERVICE_ROLE_KEY is required for profile management operations');
+}
+
+const supabase = createClient(supabaseUrl, serviceRoleKey);
 
 // Simple in-memory cache for profile assignments
 // In production with multiple instances, consider Redis

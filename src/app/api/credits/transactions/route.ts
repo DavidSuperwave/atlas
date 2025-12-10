@@ -14,8 +14,11 @@ export async function GET(request: Request) {
         }
 
         const { searchParams } = new URL(request.url);
-        const limit = parseInt(searchParams.get('limit') || '50', 10);
-        const offset = parseInt(searchParams.get('offset') || '0', 10);
+        // Apply bounds to prevent performance issues with very high values
+        const rawLimit = parseInt(searchParams.get('limit') || '50', 10);
+        const rawOffset = parseInt(searchParams.get('offset') || '0', 10);
+        const limit = Math.min(Math.max(1, rawLimit), 500); // Between 1 and 500
+        const offset = Math.max(0, rawOffset); // Non-negative
 
         const transactions = await getTransactionHistory(user.id, limit, offset);
 

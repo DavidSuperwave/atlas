@@ -67,12 +67,30 @@ export function getCorsHeaders(origin?: string | null): HeadersInit {
         // Exact match
         if (allowed === origin) return true;
         // Wildcard match for Vercel preview URLs
-        if (allowed.includes('*') && origin.match(new RegExp(allowed.replace('*', '.*')))) return true;
+        if (allowed.includes('*') && origin.match(new RegExp(allowed.replace(/\*/g, '.*')))) return true;
         return false;
     });
 
+    // SECURITY: Only return allowed origins, never fallback to localhost in production
+    // If origin is not allowed, return the first non-localhost origin or reject
+    let allowedOrigin: string;
+    if (isAllowed && origin) {
+        allowedOrigin = origin;
+    } else if (process.env.NODE_ENV === 'production') {
+        // In production, use Vercel URL or reject (return empty which browser will reject)
+        const productionOrigin = process.env.NEXT_PUBLIC_VERCEL_URL 
+            ? `https://${process.env.NEXT_PUBLIC_VERCEL_URL}`
+            : process.env.VERCEL_URL
+            ? `https://${process.env.VERCEL_URL}`
+            : '';
+        allowedOrigin = productionOrigin;
+    } else {
+        // In development, fallback to localhost is acceptable
+        allowedOrigin = allowedOrigins[0];
+    }
+
     return {
-        'Access-Control-Allow-Origin': isAllowed && origin ? origin : allowedOrigins[0],
+        'Access-Control-Allow-Origin': allowedOrigin,
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         'Access-Control-Allow-Credentials': 'true',
@@ -125,20 +143,28 @@ export function withCors(response: NextResponse, request: Request): NextResponse
  * 
  * @param data - Response data
  * @param request - Original request
- * @param options - Response options (status, etc.)
+ * @param options - Response options (status, headers, etc.)
  * @returns NextResponse with CORS headers
  */
 export function corsJsonResponse(
     data: unknown,
     request: Request,
-    options?: { status?: number }
+    options?: { status?: number; headers?: Record<string, string> }
 ): NextResponse {
     const origin = request.headers.get('origin');
-    const response = NextResponse.json(data, options);
+    const response = NextResponse.json(data, { status: options?.status });
     
+    // Add CORS headers
     Object.entries(getCorsHeaders(origin)).forEach(([key, value]) => {
         response.headers.set(key, value);
     });
+
+    // Add any additional custom headers
+    if (options?.headers) {
+        Object.entries(options.headers).forEach(([key, value]) => {
+            response.headers.set(key, value);
+        });
+    }
 
     return response;
 }

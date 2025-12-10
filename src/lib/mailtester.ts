@@ -1,3 +1,5 @@
+import { apiKeyPool } from './api-key-pool';
+
 export type MailTesterResponse = {
     email: string;
     user: string;
@@ -8,7 +10,9 @@ export type MailTesterResponse = {
     connections: number;
 };
 
-export async function enrichLead(email: string, apiKey: string): Promise<MailTesterResponse> {
+const MAX_RETRIES = 2;
+
+export async function enrichLead(email: string, apiKey: string, retries = 0): Promise<MailTesterResponse> {
     if (!email || !apiKey) {
         throw new Error('Email and API Key are required');
     }
@@ -25,8 +29,20 @@ export async function enrichLead(email: string, apiKey: string): Promise<MailTes
         },
     });
 
+    if (response.status === 429) {
+        // Rate limited - attempt to retry with a different key if available
+        if (retries < MAX_RETRIES && apiKeyPool.hasKeys()) {
+            const nextKey = await apiKeyPool.getAvailableKey();
+            // Avoid immediate reuse of the same key; if same, just fail
+            if (nextKey && nextKey !== apiKey) {
+                return enrichLead(email, nextKey, retries + 1);
+            }
+        }
+        throw new Error('MailTester rate limit exceeded. Please try again later.');
+    }
+
     if (!response.ok) {
-        throw new Error(`MailTester API error: ${response.statusText}`);
+        throw new Error(`MailTester API error: ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json();

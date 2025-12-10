@@ -87,6 +87,21 @@ body {
 /* Reset transition for animations */
 .animate-spin,
 .animate-pulse,
-.animate-bounce {
+.animate-bounce,
+.animate-bounce-x {
   transition: none;
+}
+
+/* Horizontal bounce animation for arrows */
+@keyframes bounce-x {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(4px);
+  }
+}
+
+.animate-bounce-x {
+  animation: bounce-x 1.5s ease-in-out infinite;
 }

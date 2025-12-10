@@ -1,8 +1,23 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase-server';
+import { checkRateLimit, getClientIp, RATE_LIMITS } from '@/lib/rate-limit';
 
 export async function POST(request: Request) {
     try {
+        // Rate limiting based on IP
+        const ip = getClientIp(request);
+        const rateLimit = checkRateLimit(ip, RATE_LIMITS.ACCESS_REQUESTS);
+        
+        if (rateLimit.limited) {
+            return NextResponse.json(
+                { 
+                    error: 'Too many requests. Please try again in a minute.',
+                    resetInSeconds: rateLimit.resetInSeconds,
+                },
+                { status: 429 }
+            );
+        }
+
         const body = await request.json();
         const { name, email, intent, telegramUsername, wantsImmediateStart } = body;
 
@@ -85,64 +100,4 @@ export async function POST(request: Request) {
     }
 }
 
-// GET endpoint for admin to list access requests
-export async function GET(request: Request) {
-    try {
-        const supabase = createServiceClient();
-        
-        // Auth check - only admins can list access requests
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-            return NextResponse.json(
-                { error: 'Unauthorized' },
-                { status: 401 }
-            );
-        }
-        
-        // Check if user is admin
-        const { data: profile } = await supabase
-            .from('user_profiles')
-            .select('is_admin')
-            .eq('id', user.id)
-            .single();
-            
-        if (!profile?.is_admin) {
-            return NextResponse.json(
-                { error: 'Forbidden - Admin access required' },
-                { status: 403 }
-            );
-        }
-
-        // Get status filter from query params
-        const { searchParams } = new URL(request.url);
-        const status = searchParams.get('status');
-
-        let query = supabase
-            .from('access_requests')
-            .select('*')
-            .order('created_at', { ascending: false });
-
-        if (status && status !== 'all') {
-            query = query.eq('status', status);
-        }
-
-        const { data, error } = await query;
-
-        if (error) {
-            console.error('Error fetching access requests:', error);
-            return NextResponse.json(
-                { error: 'Failed to fetch requests' },
-                { status: 500 }
-            );
-        }
-
-        return NextResponse.json({ requests: data });
-    } catch (error) {
-        console.error('Error fetching access requests:', error);
-        return NextResponse.json(
-            { error: 'Internal server error' },
-            { status: 500 }
-        );
-    }
-}
-
+// NOTE: GET endpoint removed - use /api/admin/access-requests instead

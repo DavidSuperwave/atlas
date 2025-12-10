@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServiceClient, getCurrentUser, isUserAdmin } from '@/lib/supabase-server';
 import { sendEmail } from '@/lib/resend';
 import { generateInviteEmailHtml, generateInviteEmailText } from '@/lib/emails/invite-email';
+import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
 import crypto from 'crypto';
 
 export async function POST(request: Request) {
@@ -14,6 +15,18 @@ export async function POST(request: Request) {
         const isAdmin = await isUserAdmin(user.id);
         if (!isAdmin) {
             return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        }
+
+        // Rate limit by admin user ID
+        const rateLimit = checkRateLimit(user.id, RATE_LIMITS.INVITE_SEND);
+        if (rateLimit.limited) {
+            return NextResponse.json(
+                { 
+                    error: `Rate limit exceeded. You can send ${rateLimit.max} invites per hour.`,
+                    resetInSeconds: rateLimit.resetInSeconds,
+                },
+                { status: 429 }
+            );
         }
 
         const body = await request.json();

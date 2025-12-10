@@ -9,6 +9,12 @@ function WireframeGlobe() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number>(0);
   const rotationRef = useRef(0);
+  const [isClient, setIsClient] = useState(false);
+
+  // Only render on client to avoid hydration mismatch with window.devicePixelRatio
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
   
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -17,8 +23,8 @@ function WireframeGlobe() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     
-    // High DPI support
-    const dpr = window.devicePixelRatio || 1;
+    // High DPI support - safe to use window here since we're in useEffect/callback
+    const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
     const size = 320;
     canvas.width = size * dpr;
     canvas.height = size * dpr;
@@ -183,34 +189,30 @@ function WireframeGlobe() {
   }, []);
   
   useEffect(() => {
+    if (!isClient) return;
     draw();
     return () => {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [draw]);
+  }, [draw, isClient]);
+
+  // Show placeholder on server, actual canvas on client
+  if (!isClient) {
+    return (
+      <div className="w-80 h-80 flex items-center justify-center">
+        <div className="w-80 h-80" />
+      </div>
+    );
+  }
 
   return (
-    <div className="globe-container">
+    <div className="w-80 h-80 flex items-center justify-center">
       <canvas
         ref={canvasRef}
-        className="globe-canvas"
+        className="w-80 h-80"
       />
-      <style jsx>{`
-        .globe-container {
-          width: 320px;
-          height: 320px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        
-        .globe-canvas {
-          width: 320px;
-          height: 320px;
-        }
-      `}</style>
     </div>
   );
 }
@@ -300,7 +302,7 @@ export default function LandingPage() {
           style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
         >
           Scrape Unlimited Leads From{' '}
-          <span className="text-zinc-300 font-medium">
+          <span className="text-zinc-300 font-medium" suppressHydrationWarning>
             {headlineRedacted}
             {!headlineTypingComplete && <span className="animate-pulse">|</span>}
           </span>
@@ -375,7 +377,7 @@ export default function LandingPage() {
             style={{ fontFamily: "'Inter', system-ui, sans-serif" }}
           >
             REQUEST ACCESS
-            <span className="inline-block animate-arrow-bounce">
+            <span className="inline-block animate-bounce-x">
               <svg
                 width="24"
                 height="24"
@@ -549,21 +551,6 @@ export default function LandingPage() {
         <span className="mx-2">|</span>
         <a href="#" className="hover:text-zinc-400 transition-colors">TERMS OF SERVICE</a>
       </footer>
-
-      {/* CSS Animations */}
-      <style jsx>{`
-        @keyframes arrow-bounce {
-          0%, 100% {
-            transform: translateX(0);
-          }
-          50% {
-            transform: translateX(4px);
-          }
-        }
-        .animate-arrow-bounce {
-          animation: arrow-bounce 1.5s ease-in-out infinite;
-        }
-      `}</style>
     </div>
   );
 }

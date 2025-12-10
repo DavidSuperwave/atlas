@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCurrentUser, createServiceClient } from '@/lib/supabase-server';
+import { getCurrentUser, createServiceClient, isUserAdmin } from '@/lib/supabase-server';
 
 const supabase = createServiceClient();
 
@@ -20,17 +20,12 @@ export async function GET() {
         }
 
         // Check if admin
-        const { data: profile } = await supabase
-            .from('profiles')
-            .select('role')
-            .eq('id', user.id)
-            .single();
-
-        if (profile?.role !== 'admin') {
+        const isAdmin = await isUserAdmin(user.id);
+        if (!isAdmin) {
             return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
         }
 
-        // Get recent scrapes (last 7 days or last 100)
+        // Get recent scrapes (last 7 days or last 100) - include pending_approval
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
@@ -45,20 +40,26 @@ export async function GET() {
             console.error('Error fetching scrapes:', scrapesError);
         }
 
-        // Get user emails for the scrapes
+        // Get user info for the scrapes (including account_type and credits)
         const userIds = [...new Set((scrapes || []).map(s => s.user_id))];
         const { data: users } = await supabase
-            .from('profiles')
-            .select('id, email')
+            .from('user_profiles')
+            .select('id, email, name, account_type, credits_balance')
             .in('id', userIds);
 
-        const userMap = new Map((users || []).map(u => [u.id, u.email]));
+        const userMap = new Map((users || []).map(u => [u.id, u]));
 
-        // Add user emails to scrapes
-        const scrapesWithUsers = (scrapes || []).map(s => ({
-            ...s,
-            user_email: userMap.get(s.user_id) || 'Unknown'
-        }));
+        // Add user info to scrapes
+        const scrapesWithUsers = (scrapes || []).map(s => {
+            const userInfo = userMap.get(s.user_id);
+            return {
+                ...s,
+                user_email: userInfo?.email || 'Unknown',
+                user_name: userInfo?.name || null,
+                user_account_type: userInfo?.account_type || 'full',
+                user_credits_balance: userInfo?.credits_balance || 0,
+            };
+        });
 
         // Get queue items
         const { data: queueItems, error: queueError } = await supabase

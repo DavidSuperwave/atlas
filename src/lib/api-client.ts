@@ -21,10 +21,10 @@
 /**
  * Railway backend URL from environment
  * If not set, all requests go to same origin
+ * 
+ * Note: NEXT_PUBLIC_ vars are available in both client and server contexts
  */
-const RAILWAY_API_URL = typeof window !== 'undefined' 
-    ? process.env.NEXT_PUBLIC_RAILWAY_API_URL 
-    : process.env.NEXT_PUBLIC_RAILWAY_API_URL;
+const RAILWAY_API_URL = process.env.NEXT_PUBLIC_RAILWAY_API_URL;
 
 /**
  * APIs that should be routed to Railway (long-running operations)

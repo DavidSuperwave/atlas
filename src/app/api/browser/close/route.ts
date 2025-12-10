@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser, createServiceClient } from '@/lib/supabase-server';
 import { handleCors, corsJsonResponse } from '@/lib/cors';
+import { goLoginClient } from '@/lib/gologin-client';
 
 const supabase = createServiceClient();
 
@@ -38,6 +39,29 @@ export async function POST(request: Request) {
             sessionId = body.sessionId;
         } catch {
             // No body, will close any active session for user
+        }
+
+        // Fetch active manual sessions to stop cloud browsers before marking closed
+        const sessionQuery = supabase
+            .from('browser_sessions')
+            .select('id, profile_id')
+            .eq('user_id', user.id)
+            .eq('status', 'active')
+            .eq('session_type', 'manual');
+
+        const { data: activeSessions } = sessionId
+            ? await sessionQuery.eq('id', sessionId)
+            : await sessionQuery;
+
+        if (activeSessions && activeSessions.length > 0) {
+            for (const session of activeSessions) {
+                if (session.profile_id) {
+                    const result = await goLoginClient.stopCloudBrowser(session.profile_id);
+                    if (!result.success) {
+                        console.warn(`[BROWSER-CLOSE] Failed to stop cloud browser for profile ${session.profile_id}: ${result.error}`);
+                    }
+                }
+            }
         }
 
         // Find and close user's active session

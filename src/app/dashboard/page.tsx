@@ -52,6 +52,15 @@ export default function DashboardPage() {
   const [showTagDropdown, setShowTagDropdown] = useState(false);
   const [showTagInput, setShowTagInput] = useState(false);
 
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 10;
+
+  // Selection state for bulk operations
+  const [selectedScrapeIds, setSelectedScrapeIds] = useState<Set<string>>(new Set());
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
   // Active scrape status tracking (for time estimates)
   const [activeScrapeStatuses, setActiveScrapeStatuses] = useState<Record<string, ScrapeStatusInfo>>({});
   const statusPollingRef = useRef<NodeJS.Timeout | null>(null);
@@ -153,6 +162,23 @@ export default function DashboardPage() {
     });
   }, [scrapes, searchQuery, filterTags, filterStatus]);
 
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredScrapes.length / ITEMS_PER_PAGE);
+  const paginatedScrapes = useMemo(() => {
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+    return filteredScrapes.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  }, [filteredScrapes, currentPage]);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, filterTags, filterStatus]);
+
+  // Clear selection when page changes or filters change
+  useEffect(() => {
+    setSelectedScrapeIds(new Set());
+  }, [currentPage, searchQuery, filterTags, filterStatus]);
+
   async function fetchScrapes() {
     setFetchingData(true);
     const supabase = getSupabaseClient();
@@ -232,6 +258,64 @@ export default function DashboardPage() {
   }
 
   const hasActiveFilters = searchQuery || filterTags.length > 0 || filterStatus !== 'all';
+
+  // Selection functions
+  function toggleSelectScrape(id: string, e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const newSelected = new Set(selectedScrapeIds);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedScrapeIds(newSelected);
+  }
+
+  function toggleSelectAll() {
+    if (selectedScrapeIds.size === paginatedScrapes.length) {
+      setSelectedScrapeIds(new Set());
+    } else {
+      setSelectedScrapeIds(new Set(paginatedScrapes.map(s => s.id)));
+    }
+  }
+
+  async function handleBulkDelete(keepLeads: boolean = false) {
+    if (selectedScrapeIds.size === 0) return;
+    
+    setIsDeleting(true);
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const id of selectedScrapeIds) {
+      try {
+        const res = await apiFetch(`/api/scrapes/${id}/delete`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keepLeads }),
+        });
+        if (res.ok) {
+          successCount++;
+        } else {
+          errorCount++;
+        }
+      } catch {
+        errorCount++;
+      }
+    }
+
+    setIsDeleting(false);
+    setShowDeleteConfirm(false);
+    setSelectedScrapeIds(new Set());
+    
+    if (successCount > 0) {
+      fetchScrapes();
+    }
+    
+    if (errorCount > 0) {
+      alert(`Deleted ${successCount} campaigns. ${errorCount} failed.`);
+    }
+  }
 
   if (authLoading || fetchingData) {
     return (
@@ -412,15 +496,57 @@ export default function DashboardPage() {
 
         {/* Header with View All Leads */}
         <div className="flex justify-between items-center mb-4">
-          <h2 className="text-lg font-semibold text-zinc-900">Your Campaigns</h2>
-          <Link href="/leads" className="bg-white hover:bg-zinc-50 text-zinc-700 px-4 py-2 rounded-lg font-medium transition-colors border border-zinc-200 text-sm">
-            View All Leads →
-          </Link>
+          <div className="flex items-center gap-4">
+            <h2 className="text-lg font-semibold text-zinc-900">Your Campaigns</h2>
+            {selectedScrapeIds.size > 0 && (
+              <span className="text-sm text-zinc-500">
+                {selectedScrapeIds.size} selected
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            {selectedScrapeIds.size > 0 && (
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                disabled={isDeleting}
+                className="flex items-center gap-2 bg-red-50 hover:bg-red-100 text-red-700 px-4 py-2 rounded-lg font-medium transition-colors border border-red-200 text-sm disabled:opacity-50"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+                </svg>
+                Delete ({selectedScrapeIds.size})
+              </button>
+            )}
+            <Link href="/leads" className="bg-white hover:bg-zinc-50 text-zinc-700 px-4 py-2 rounded-lg font-medium transition-colors border border-zinc-200 text-sm">
+              View All Leads →
+            </Link>
+          </div>
         </div>
 
         {/* Filter Bar */}
         <div className="bg-white p-4 rounded-xl border border-zinc-200 mb-6">
           <div className="flex flex-wrap gap-3 items-center">
+            {/* Select All Checkbox */}
+            {paginatedScrapes.length > 0 && (
+              <button
+                onClick={toggleSelectAll}
+                className={`flex items-center justify-center w-8 h-8 rounded-lg border transition-colors ${
+                  selectedScrapeIds.size === paginatedScrapes.length && paginatedScrapes.length > 0
+                    ? 'bg-zinc-900 border-zinc-900' 
+                    : selectedScrapeIds.size > 0 
+                      ? 'bg-zinc-100 border-zinc-400'
+                      : 'bg-zinc-50 border-zinc-200 hover:border-zinc-400'
+                }`}
+                title={selectedScrapeIds.size === paginatedScrapes.length ? 'Deselect all' : 'Select all on page'}
+              >
+                {selectedScrapeIds.size === paginatedScrapes.length && paginatedScrapes.length > 0 ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                ) : selectedScrapeIds.size > 0 ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                ) : null}
+              </button>
+            )}
+            
             {/* Search */}
             <div className="flex-1 min-w-[200px]">
               <div className="relative">
@@ -537,18 +663,39 @@ export default function DashboardPage() {
 
         {/* Scrape List */}
         <div className="grid gap-3">
-          {filteredScrapes.length === 0 ? (
+          {paginatedScrapes.length === 0 ? (
             <div className="text-center py-12 text-zinc-500 bg-white rounded-xl border border-zinc-200">
               {hasActiveFilters ? 'No campaigns match your filters.' : 'No scrapes yet. Start one above!'}
             </div>
           ) : (
-            filteredScrapes.map((scrape) => (
-              <Link
+            paginatedScrapes.map((scrape) => (
+              <div
                 key={scrape.id}
-                href={`/scrapes/${scrape.id}`}
-                className="bg-white p-4 rounded-xl border border-zinc-200 hover:border-zinc-400 transition-all block min-w-0 group"
+                className={`bg-white p-4 rounded-xl border transition-all min-w-0 group flex items-center gap-4 ${
+                  selectedScrapeIds.has(scrape.id) 
+                    ? 'border-zinc-400 bg-zinc-50' 
+                    : 'border-zinc-200 hover:border-zinc-400'
+                }`}
               >
-                <div className="flex flex-col md:flex-row md:items-center gap-4 md:gap-6">
+                {/* Checkbox */}
+                <button
+                  onClick={(e) => toggleSelectScrape(scrape.id, e)}
+                  className={`flex-shrink-0 flex items-center justify-center w-5 h-5 rounded border transition-colors ${
+                    selectedScrapeIds.has(scrape.id)
+                      ? 'bg-zinc-900 border-zinc-900'
+                      : 'border-zinc-300 hover:border-zinc-500'
+                  }`}
+                >
+                  {selectedScrapeIds.has(scrape.id) && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  )}
+                </button>
+                
+                {/* Main content - clickable link */}
+                <Link
+                  href={`/scrapes/${scrape.id}`}
+                  className="flex-1 flex flex-col md:flex-row md:items-center gap-4 md:gap-6 min-w-0"
+                >
                   {/* Name, Tags, URL */}
                   <div className="flex-1 min-w-0 w-full">
                     <div className="flex flex-wrap items-center gap-2 mb-1">
@@ -572,7 +719,7 @@ export default function DashboardPage() {
                     <p className="text-sm text-zinc-500 truncate" title={scrape.url}>
                       {scrape.url}
                     </p>
-                    <p className="text-xs text-zinc-400 mt-1">
+                    <p className="text-xs text-zinc-400 mt-1" suppressHydrationWarning>
                       {new Date(scrape.created_at).toLocaleString()}
                     </p>
                   </div>
@@ -614,11 +761,80 @@ export default function DashboardPage() {
                       <path d="m9 18 6-6-6-6"/>
                     </svg>
                   </div>
-                </div>
-              </Link>
+                </Link>
+              </div>
             ))
           )}
         </div>
+
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between mt-6 bg-white p-4 rounded-xl border border-zinc-200">
+            <p className="text-sm text-zinc-500">
+              Showing {((currentPage - 1) * ITEMS_PER_PAGE) + 1} - {Math.min(currentPage * ITEMS_PER_PAGE, filteredScrapes.length)} of {filteredScrapes.length}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage(1)}
+                disabled={currentPage === 1}
+                className="px-3 py-1.5 text-sm font-medium text-zinc-700 bg-zinc-50 hover:bg-zinc-100 rounded-lg border border-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                First
+              </button>
+              <button
+                onClick={() => setCurrentPage(currentPage - 1)}
+                disabled={currentPage === 1}
+                className="px-3 py-1.5 text-sm font-medium text-zinc-700 bg-zinc-50 hover:bg-zinc-100 rounded-lg border border-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+              </button>
+              
+              {/* Page numbers */}
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum;
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (currentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = currentPage - 2 + i;
+                  }
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => setCurrentPage(pageNum)}
+                      className={`px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors ${
+                        currentPage === pageNum
+                          ? 'bg-zinc-900 text-white border-zinc-900'
+                          : 'text-zinc-700 bg-zinc-50 hover:bg-zinc-100 border-zinc-200'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
+              </div>
+              
+              <button
+                onClick={() => setCurrentPage(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1.5 text-sm font-medium text-zinc-700 bg-zinc-50 hover:bg-zinc-100 rounded-lg border border-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+              <button
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1.5 text-sm font-medium text-zinc-700 bg-zinc-50 hover:bg-zinc-100 rounded-lg border border-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Last
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Click outside handler for tag dropdown */}
@@ -627,6 +843,62 @@ export default function DashboardPage() {
           className="fixed inset-0 z-10" 
           onClick={() => setShowTagDropdown(false)}
         />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-red-100 rounded-full">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-red-600">
+                  <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+                  <line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-zinc-900">Delete {selectedScrapeIds.size} Campaign{selectedScrapeIds.size > 1 ? 's' : ''}?</h3>
+            </div>
+            
+            <p className="text-zinc-600 mb-6">
+              This action cannot be undone. Choose what to do with the associated leads:
+            </p>
+            
+            <div className="flex flex-col gap-3 mb-6">
+              <button
+                onClick={() => handleBulkDelete(false)}
+                disabled={isDeleting}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <>
+                    <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Deleting...
+                  </>
+                ) : (
+                  <>Delete campaigns and leads</>
+                )}
+              </button>
+              <button
+                onClick={() => handleBulkDelete(true)}
+                disabled={isDeleting}
+                className="w-full px-4 py-3 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-lg font-medium transition-colors disabled:opacity-50"
+              >
+                Delete campaigns, keep leads
+              </button>
+            </div>
+            
+            <button
+              onClick={() => setShowDeleteConfirm(false)}
+              disabled={isDeleting}
+              className="w-full px-4 py-2 text-zinc-600 hover:text-zinc-900 font-medium transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
