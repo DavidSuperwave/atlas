@@ -7,12 +7,13 @@ import { useAuth } from './AuthProvider';
 import { signOut, getUserProfile } from '@/lib/supabase-client';
 
 // Routes where sidebar should be hidden
-const PUBLIC_ROUTES = ['/', '/login', '/onboarding', '/invite', '/account-disabled', '/pending-approval'];
+const PUBLIC_ROUTES = ['/', '/login', '/onboarding', '/invite', '/account-disabled', '/pending-approval', '/signup-scrape', '/payment'];
 
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
+  const isScrapeOnlyUser = profile?.account_type === 'scrape_only';
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -134,7 +135,8 @@ export default function Sidebar() {
           <line x1="2" x2="22" y1="12" y2="12" />
           <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
         </svg>
-      )
+      ),
+      disabledForScrapeOnly: false,
     },
     {
       name: 'Database',
@@ -145,7 +147,8 @@ export default function Sidebar() {
           <path d="M3 9H21" />
           <path d="M9 21V9" />
         </svg>
-      )
+      ),
+      disabledForScrapeOnly: true,
     },
     {
       name: 'Email Verification',
@@ -155,7 +158,8 @@ export default function Sidebar() {
           <rect width="20" height="16" x="2" y="4" rx="2" />
           <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
         </svg>
-      )
+      ),
+      disabledForScrapeOnly: true,
     }
   ];
 
@@ -313,6 +317,41 @@ export default function Sidebar() {
       <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto">
         {navItems.map((item) => {
           const active = isActive(item.path);
+          const isDisabled = isScrapeOnlyUser && item.disabledForScrapeOnly;
+          
+          if (isDisabled) {
+            // Render disabled item (not clickable)
+            return (
+              <div
+                key={item.path}
+                className={`flex items-center gap-2.5 px-2.5 py-2 rounded-md transition-all duration-150 group relative text-zinc-600 cursor-not-allowed ${isCollapsed ? 'justify-center' : ''}`}
+                title={isCollapsed ? `${item.name} (Disabled)` : ''}
+              >
+                <span className="flex-shrink-0 text-zinc-600">
+                  {item.icon}
+                </span>
+                
+                {!isCollapsed && (
+                  <>
+                    <span className="text-sm font-medium truncate">
+                      {item.name}
+                    </span>
+                    <span className="ml-auto text-[10px] font-medium text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded">
+                      Disabled
+                    </span>
+                  </>
+                )}
+
+                {/* Tooltip for collapsed state */}
+                {isCollapsed && (
+                  <div className="absolute left-full ml-2 px-2 py-1 bg-zinc-800 text-zinc-400 text-xs font-medium rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 border border-zinc-700/50">
+                    {item.name} (Disabled)
+                  </div>
+                )}
+              </div>
+            );
+          }
+          
           return (
             <Link
               key={item.path}

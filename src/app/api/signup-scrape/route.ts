@@ -104,11 +104,11 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Failed to create user' }, { status: 500 });
         }
 
-        // Create user profile with account_type='scrape_only' and auto-approve
+        // Update user profile with account_type='scrape_only' and auto-approve
+        // The profile is auto-created by a database trigger, so we just need to update it
         const { error: profileError } = await supabase
             .from('user_profiles')
-            .insert({
-                id: authData.user.id,
+            .update({
                 email: email.toLowerCase(),
                 credits_balance: 0,
                 is_admin: false,
@@ -117,13 +117,14 @@ export async function POST(request: Request) {
                 account_type: 'scrape_only',
                 onboarding_completed: true, // No full onboarding needed
                 onboarding_completed_at: new Date().toISOString(),
-            });
+            })
+            .eq('id', authData.user.id);
 
         if (profileError) {
-            console.error('Error creating user profile:', profileError);
+            console.error('Error updating user profile:', profileError);
             // Try to clean up the auth user
             await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
-            return NextResponse.json({ error: 'Failed to create user profile' }, { status: 500 });
+            return NextResponse.json({ error: 'Failed to update user profile: ' + profileError.message }, { status: 500 });
         }
 
         // Mark the signup link as used
