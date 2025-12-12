@@ -38,6 +38,8 @@ export interface ProfileLookupResult {
     profileId: string;
     source: 'database' | 'environment' | 'none';
     profileName?: string;
+    apiToken?: string;
+    apiKeyId?: string;
     error?: string;
 }
 
@@ -76,21 +78,19 @@ export interface UserProfileAssignment {
  * 3. Fallback to GOLOGIN_PROFILE_ID environment variable
  * 
  * @param userId - The user's ID
- * @returns ProfileLookupResult with profile ID and source
+ * @returns ProfileLookupResult with profile ID, API token, and source
  */
 export async function getUserProfileId(userId: string): Promise<ProfileLookupResult> {
     // Check cache first
     const cached = profileCache.get(userId);
     if (cached && cached.expiresAt > Date.now()) {
         console.log(`[PROFILE-MANAGER] Cache hit for user ${userId}: ${cached.profileId}`);
-        return {
-            profileId: cached.profileId,
-            source: 'database'
-        };
+        // For cached results, we need to re-fetch the API token since we don't cache it
+        // (tokens are sensitive and should be fetched fresh)
     }
 
     try {
-        // Query database for user's assigned profile
+        // Query database for user's assigned profile with API key
         const { data, error } = await supabase
             .from('user_gologin_profiles')
             .select(`
@@ -99,7 +99,8 @@ export async function getUserProfileId(userId: string): Promise<ProfileLookupRes
                     id,
                     profile_id,
                     name,
-                    is_active
+                    is_active,
+                    api_key_id
                 )
             `)
             .eq('user_id', userId)
@@ -125,11 +126,36 @@ export async function getUserProfileId(userId: string): Promise<ProfileLookupRes
                     expiresAt: Date.now() + CACHE_TTL
                 });
 
+                // Fetch API token if profile has an API key linked
+                let apiToken: string | undefined;
+                let apiKeyId: string | undefined;
+                
+                if (profile.api_key_id) {
+                    const { data: apiKeyData } = await supabase
+                        .from('gologin_api_keys')
+                        .select('id, api_token')
+                        .eq('id', profile.api_key_id)
+                        .eq('is_active', true)
+                        .single();
+                    
+                    if (apiKeyData) {
+                        apiToken = apiKeyData.api_token;
+                        apiKeyId = apiKeyData.id;
+                    }
+                }
+                
+                // Fallback to env var for API token if not found
+                if (!apiToken) {
+                    apiToken = process.env.GOLOGIN_API_TOKEN;
+                }
+
                 console.log(`[PROFILE-MANAGER] Found profile for user ${userId}: ${profile.name} (${profile.profile_id})`);
                 return {
                     profileId: profile.profile_id,
                     source: 'database',
-                    profileName: profile.name
+                    profileName: profile.name,
+                    apiToken,
+                    apiKeyId
                 };
             }
         }
@@ -139,11 +165,13 @@ export async function getUserProfileId(userId: string): Promise<ProfileLookupRes
 
     // Fallback to environment variable
     const envProfileId = process.env.GOLOGIN_PROFILE_ID;
+    const envApiToken = process.env.GOLOGIN_API_TOKEN;
     if (envProfileId) {
         console.log(`[PROFILE-MANAGER] Using environment variable fallback for user ${userId}`);
         return {
             profileId: envProfileId,
-            source: 'environment'
+            source: 'environment',
+            apiToken: envApiToken
         };
     }
 
