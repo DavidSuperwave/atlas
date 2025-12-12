@@ -38,17 +38,8 @@ const RETRY_DELAY = 3000;
 /** Initial delay after starting profile before connecting */
 const PROFILE_START_DELAY = 2000;
 
-/** Cache of browser managers by profile ID and API token hash */
+/** Cache of browser managers by profile ID */
 const browserManagerCache = new Map<string, BrowserManagerGoLogin>();
-
-/**
- * Create a cache key from profile ID and API token
- */
-function getCacheKey(profileId: string, apiToken?: string): string {
-    // Use first 10 chars of token as part of cache key (for multi-key support)
-    const tokenPrefix = apiToken ? `:${apiToken.substring(0, 10)}` : '';
-    return `${profileId}${tokenPrefix}`;
-}
 
 /**
  * BrowserManagerGoLogin handles connections to GoLogin browser profiles
@@ -501,17 +492,15 @@ Try:
  * or creates a new one if it doesn't exist.
  * 
  * @param profileId - The GoLogin profile ID
- * @param apiToken - Optional API token (uses env var if not provided)
  * @returns BrowserManagerGoLogin instance for the profile
  */
-export function getBrowserManagerForProfile(profileId: string, apiToken?: string): BrowserManagerGoLogin {
-    const cacheKey = getCacheKey(profileId, apiToken);
-    let manager = browserManagerCache.get(cacheKey);
+export function getBrowserManagerForProfile(profileId: string): BrowserManagerGoLogin {
+    let manager = browserManagerCache.get(profileId);
 
     if (!manager) {
         console.log(`[GOLOGIN-BROWSER] Creating new browser manager for profile ${profileId}`);
-        manager = new BrowserManagerGoLogin(profileId, apiToken);
-        browserManagerCache.set(cacheKey, manager);
+        manager = new BrowserManagerGoLogin(profileId);
+        browserManagerCache.set(profileId, manager);
     }
 
     return manager;
@@ -522,11 +511,10 @@ export function getBrowserManagerForProfile(profileId: string, apiToken?: string
  * Convenience function that gets the manager and connects in one call
  * 
  * @param profileId - The GoLogin profile ID
- * @param apiToken - Optional API token (uses env var if not provided)
  * @returns Connected Puppeteer Browser instance
  */
-export async function getBrowserForProfile(profileId: string, apiToken?: string): Promise<Browser> {
-    const manager = getBrowserManagerForProfile(profileId, apiToken);
+export async function getBrowserForProfile(profileId: string): Promise<Browser> {
+    const manager = getBrowserManagerForProfile(profileId);
     return manager.getBrowser();
 }
 
@@ -534,14 +522,12 @@ export async function getBrowserForProfile(profileId: string, apiToken?: string)
  * Cleanup a specific profile's browser manager
  * 
  * @param profileId - The GoLogin profile ID
- * @param apiToken - Optional API token (for cache key matching)
  */
-export async function cleanupProfile(profileId: string, apiToken?: string): Promise<void> {
-    const cacheKey = getCacheKey(profileId, apiToken);
-    const manager = browserManagerCache.get(cacheKey);
+export async function cleanupProfile(profileId: string): Promise<void> {
+    const manager = browserManagerCache.get(profileId);
     if (manager) {
         await manager.cleanup();
-        browserManagerCache.delete(cacheKey);
+        browserManagerCache.delete(profileId);
     }
 }
 

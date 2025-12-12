@@ -1,25 +1,23 @@
 /**
  * Scrape Queue System
  * 
- * Manages scrape processing with multi-API-key support for horizontal scaling.
+ * Manages sequential scrape processing to prevent:
+ * 1. Concurrent browser instances (same profile)
+ * 2. Apollo detection (concurrent requests)
+ * 3. Race conditions with shared browser
  * 
  * Architecture:
- * - Multiple API key workers can run in parallel
- * - Each API key has its own dedicated worker
- * - Workers process scrapes for profiles under their API key
+ * - Single worker processes scrapes one at a time
  * - Queue stored in Supabase (survives restarts)
- * - Checks browser availability per API key before starting
+ * - Checks browser availability before starting
+ * - Notifies users of conflicts
  * 
- * Multi-Key Benefits:
- * - Horizontal scaling: 3 API keys = 3 concurrent scrapes
- * - Fault isolation: If one key fails, others continue
- * - Load distribution: Scrapes distributed across keys
+ * Similar to verification-queue.ts but for scrapes
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { ScrapedLead } from './scraper-types';
 import { getUserProfileId, ProfileLookupResult } from './gologin-profile-manager';
-import { getAllActiveApiKeys, GoLoginApiKey, hasAnyApiKey, ensureApiKeyExists } from './gologin-api-key-manager';
 
 // Lazy-loaded scraper function to avoid module load issues
 let scrapeApolloFn: ((url: string, pages?: number, userId?: string) => Promise<ScrapedLead[]>) | null = null;
@@ -158,12 +156,10 @@ function isGoLoginMode(): boolean {
 
 /**
  * Validate required environment variables
- * Now supports multi-key architecture: API keys can come from DB or env
  */
-export async function validateEnvironment(): Promise<{ valid: boolean; errors: string[]; warnings: string[]; apiKeyCount?: number }> {
+export function validateEnvironment(): { valid: boolean; errors: string[]; warnings: string[] } {
     const errors: string[] = [];
     const warnings: string[] = [];
-    let apiKeyCount = 0;
     
     // Check Supabase
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
@@ -178,58 +174,11 @@ export async function validateEnvironment(): Promise<{ valid: boolean; errors: s
     
     // Check GoLogin (if in gologin mode)
     if (isGoLoginMode()) {
-        // Check if any API keys are configured (DB or env)
-        const hasKey = await hasAnyApiKey();
-        if (!hasKey) {
-            errors.push('No GoLogin API keys configured (neither in database nor GOLOGIN_API_TOKEN env var)');
-        } else {
-            // Count active API keys
-            const activeKeys = await getAllActiveApiKeys();
-            apiKeyCount = activeKeys.length;
-            
-            if (apiKeyCount === 0 && process.env.GOLOGIN_API_TOKEN) {
-                // Env var exists but no DB keys - will be auto-migrated
-                warnings.push('Using GOLOGIN_API_TOKEN from env (will be migrated to database)');
-                apiKeyCount = 1;
-            } else if (apiKeyCount > 0) {
-                console.log(`[SCRAPE-QUEUE] Found ${apiKeyCount} active API key(s) in database`);
-            }
+        if (!process.env.GOLOGIN_API_TOKEN) {
+            errors.push('GOLOGIN_API_TOKEN is not set (required for gologin mode)');
         }
-        
         if (!process.env.GOLOGIN_PROFILE_ID) {
             warnings.push('GOLOGIN_PROFILE_ID not set, will use database profile assignments');
-        }
-    }
-    
-    return {
-        valid: errors.length === 0,
-        errors,
-        warnings,
-        apiKeyCount
-    };
-}
-
-/**
- * Synchronous version for backward compatibility
- * Uses cached/env-only checks
- */
-export function validateEnvironmentSync(): { valid: boolean; errors: string[]; warnings: string[] } {
-    const errors: string[] = [];
-    const warnings: string[] = [];
-    
-    // Check Supabase
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
-        errors.push('NEXT_PUBLIC_SUPABASE_URL is not set');
-    }
-    if (!process.env.SUPABASE_SERVICE_ROLE_KEY && !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-        errors.push('Neither SUPABASE_SERVICE_ROLE_KEY nor NEXT_PUBLIC_SUPABASE_ANON_KEY is set');
-    }
-    
-    // Check GoLogin (if in gologin mode) - only env var check
-    if (isGoLoginMode()) {
-        if (!process.env.GOLOGIN_API_TOKEN) {
-            // This is now just a warning since keys can come from DB
-            warnings.push('GOLOGIN_API_TOKEN not set in env (may be configured in database)');
         }
     }
     
@@ -499,10 +448,6 @@ class ScrapeQueue {
     /**
      * Start the queue processor
      * Call this when the server starts
-     * 
-     * Multi-key architecture:
-     * - Ensures at least one API key exists (auto-migrates from env if needed)
-     * - Single processor handles all API keys (parallel workers for each key coming in future)
      */
     startProcessor(): void {
         if (this.processorInterval) {
@@ -510,69 +455,46 @@ class ScrapeQueue {
             return;
         }
 
-        // Use sync validation for immediate startup, async validation runs after
-        const syncValidation = validateEnvironmentSync();
+        // Validate environment before starting
+        const { valid, errors, warnings } = validateEnvironment();
         
-        if (syncValidation.warnings.length > 0) {
-            syncValidation.warnings.forEach(w => console.warn(`[SCRAPE-QUEUE] Warning: ${w}`));
+        if (warnings.length > 0) {
+            warnings.forEach(w => console.warn(`[SCRAPE-QUEUE] Warning: ${w}`));
         }
         
-        // Don't block on sync validation errors for API token since it can be in DB
+        if (!valid) {
+            console.error('[SCRAPE-QUEUE] Cannot start processor - environment validation failed:');
+            errors.forEach(e => console.error(`  - ${e}`));
+            return;
+        }
+
         console.log('[SCRAPE-QUEUE] Starting queue processor...');
         console.log(`[SCRAPE-QUEUE] SCRAPER_MODE: ${process.env.SCRAPER_MODE || '(not set)'}`);
         console.log(`[SCRAPE-QUEUE] Is GoLogin mode: ${isGoLoginMode()}`);
         
         this.processorStarted = true;
         
-        // Async initialization: ensure API key exists, then start processing
-        this.initializeAndStart().catch(err => {
-            console.error('[SCRAPE-QUEUE] Error in initialization:', err);
-        });
-    }
-
-    /**
-     * Async initialization: validates environment and starts processing
-     */
-    private async initializeAndStart(): Promise<void> {
-        try {
-            // Ensure at least one API key exists (auto-migrate from env if needed)
-            await ensureApiKeyExists();
-            
-            // Full async validation
-            const { valid, errors, warnings, apiKeyCount } = await validateEnvironment();
-            
-            if (warnings.length > 0) {
-                warnings.forEach(w => console.warn(`[SCRAPE-QUEUE] Warning: ${w}`));
-            }
-            
-            if (!valid) {
-                console.error('[SCRAPE-QUEUE] Environment validation failed:');
-                errors.forEach(e => console.error(`  - ${e}`));
-                this.processorStarted = false;
-                return;
-            }
-            
-            console.log(`[SCRAPE-QUEUE] Initialized with ${apiKeyCount || 0} API key(s)`);
-            
-            // Clean up stale sessions before processing
-            await this.cleanupStaleSessions();
-            
+        // Clean up stale sessions before processing
+        this.cleanupStaleSessions().then(() => {
             // Process immediately on start
-            await this.processNext();
-            
-        } catch (err) {
-            console.error('[SCRAPE-QUEUE] Error in initialization:', err);
-            // Still try to process even if some setup fails
-            this.processNext().catch(e => console.error('[SCRAPE-QUEUE] Error in processNext:', e));
-        }
-        
+            this.processNext().catch(err => {
+                console.error('[SCRAPE-QUEUE] Error in initial processNext:', err);
+            });
+        }).catch(err => {
+            console.error('[SCRAPE-QUEUE] Error in startup cleanup:', err);
+            // Still try to process even if cleanup fails
+            this.processNext().catch(err => {
+                console.error('[SCRAPE-QUEUE] Error in initial processNext:', err);
+            });
+        });
+
         // Then poll regularly
         let pollCount = 0;
         this.processorInterval = setInterval(() => {
             pollCount++;
             // Log heartbeat every 20 polls (~1 minute) to verify processor is running
             if (pollCount % 20 === 0) {
-                this.logHeartbeat(pollCount);
+                console.log(`[SCRAPE-QUEUE] Heartbeat: processor alive, ${pollCount} polls completed`);
             }
             this.processNext().catch(err => {
                 console.error('[SCRAPE-QUEUE] Error in processNext:', err);
@@ -580,18 +502,6 @@ class ScrapeQueue {
         }, POLL_INTERVAL);
 
         console.log(`[SCRAPE-QUEUE] Processor started (polling every ${POLL_INTERVAL}ms)`);
-    }
-    
-    /**
-     * Log heartbeat with API key status
-     */
-    private async logHeartbeat(pollCount: number): Promise<void> {
-        try {
-            const activeKeys = await getAllActiveApiKeys();
-            console.log(`[SCRAPE-QUEUE] Heartbeat: processor alive, ${pollCount} polls, ${activeKeys.length} API keys active`);
-        } catch {
-            console.log(`[SCRAPE-QUEUE] Heartbeat: processor alive, ${pollCount} polls completed`);
-        }
     }
 
     /**
@@ -816,13 +726,6 @@ class ScrapeQueue {
             return null;
         }
 
-        // Safety check: Don't process scrapes that require admin approval
-        // These are for scrape-only users and should be processed manually
-        if (data.requires_admin_approval === true) {
-            console.log(`[SCRAPE-QUEUE] Skipping scrape ${scrapeId} - requires admin approval`);
-            return null;
-        }
-
         return data as ScrapeRecord;
     }
 
@@ -907,7 +810,7 @@ class ScrapeQueue {
                 return;
             }
             
-            console.log(`[SCRAPE-QUEUE] User ${nextItem.user_id} will use profile: ${profileResult.profileId} (source: ${profileResult.source}, apiKey: ${profileResult.apiKeyId || 'env'})`);
+            console.log(`[SCRAPE-QUEUE] User ${nextItem.user_id} will use profile: ${profileResult.profileId} (source: ${profileResult.source})`);
             
             // Check if THIS specific profile is available
             const { state, session } = await this.getBrowserState(profileResult.profileId);
@@ -925,7 +828,7 @@ class ScrapeQueue {
 
             console.log(`[SCRAPE-QUEUE] Starting scrape: ${nextItem.scrape_id}`);
 
-            // Create browser session record with the ACTUAL profile and API key being used
+            // Create browser session record with the ACTUAL profile being used
             const { data: sessionData } = await supabase
                 .from('browser_sessions')
                 .insert({
@@ -933,8 +836,7 @@ class ScrapeQueue {
                     user_id: nextItem.user_id,
                     session_type: 'scrape',
                     status: 'active',
-                    scrape_id: nextItem.scrape_id,
-                    api_key_id: profileResult.apiKeyId || null  // Track which API key is being used
+                    scrape_id: nextItem.scrape_id
                 })
                 .select()
                 .single();
@@ -947,13 +849,10 @@ class ScrapeQueue {
                 throw new Error('Scrape record not found');
             }
 
-            // Update scrape status to running and track API key used
+            // Update scrape status to running
             await supabase
                 .from('scrapes')
-                .update({ 
-                    status: 'running',
-                    gologin_api_key_id: profileResult.apiKeyId || null  // Track which API key is used
-                })
+                .update({ status: 'running' })
                 .eq('id', nextItem.scrape_id);
 
             // Extract pages from filters or default to 1
@@ -1325,52 +1224,6 @@ class ScrapeQueue {
             isGoLoginMode: isGoLoginMode(),
             scraperMode: process.env.SCRAPER_MODE || 'local'
         };
-    }
-
-    /**
-     * Get extended status with API key information
-     * Async version that includes database lookups
-     */
-    async getExtendedStatus(): Promise<{
-        processorStarted: boolean;
-        isProcessing: boolean;
-        currentScrapeId: string | null;
-        isGoLoginMode: boolean;
-        scraperMode: string;
-        apiKeyCount: number;
-        activeSessionsByKey: { apiKeyId: string; count: number }[];
-    }> {
-        const baseStatus = this.getStatus();
-        
-        try {
-            const activeKeys = await getAllActiveApiKeys();
-            const supabase = getSupabase();
-            
-            // Get active session counts per API key
-            const sessionCounts: { apiKeyId: string; count: number }[] = [];
-            for (const key of activeKeys) {
-                const { count } = await supabase
-                    .from('browser_sessions')
-                    .select('*', { count: 'exact', head: true })
-                    .eq('api_key_id', key.id)
-                    .eq('status', 'active');
-                
-                sessionCounts.push({ apiKeyId: key.id, count: count || 0 });
-            }
-            
-            return {
-                ...baseStatus,
-                apiKeyCount: activeKeys.length,
-                activeSessionsByKey: sessionCounts
-            };
-        } catch (error) {
-            console.error('[SCRAPE-QUEUE] Error getting extended status:', error);
-            return {
-                ...baseStatus,
-                apiKeyCount: 0,
-                activeSessionsByKey: []
-            };
-        }
     }
 }
 

@@ -487,3 +487,9 @@ export async function ensureApiKeyExists(): Promise<void> {
         await createApiKey('Default (from env)', process.env.GOLOGIN_API_TOKEN, true);
     }
 }
+
+
+
+
+
+

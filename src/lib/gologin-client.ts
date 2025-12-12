@@ -466,39 +466,6 @@ export class GoLoginClient {
     }
 
     /**
-     * Stop a cloud browser session (manual access)
-     * Uses GoLogin cloud API endpoint: DELETE /browser/{id}/web
-     */
-    async stopCloudBrowser(profileId?: string): Promise<{ success: boolean; error?: string }> {
-        const id = profileId || this.profileId;
-        if (!id) {
-            return { success: false, error: 'Profile ID is required' };
-        }
-
-        try {
-            const response = await fetch(`${GOLOGIN_API_URL}/browser/${id}/web`, {
-                method: 'DELETE',
-                headers: this.getHeaders(),
-            });
-
-            // 404 means already stopped/not found - treat as success
-            if (!response.ok && response.status !== 404) {
-                const errorText = await response.text();
-                throw new Error(`HTTP error ${response.status}: ${errorText}`);
-            }
-
-            // Remove cached running profile if present
-            this.runningProfiles.delete(id);
-
-            return { success: true };
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            console.error(`[GOLOGIN-CLIENT] Error stopping cloud browser ${id}:`, errorMessage);
-            return { success: false, error: errorMessage };
-        }
-    }
-
-    /**
      * Check if a profile is currently running
      * 
      * @param profileId - Profile ID to check (uses default if not provided)
@@ -786,74 +753,5 @@ export class GoLoginClient {
     }
 }
 
-// ============================================================================
-// FACTORY FUNCTIONS FOR MULTI-KEY SUPPORT
-// ============================================================================
-
-// Cache of GoLoginClient instances by API key ID
-const clientCache = new Map<string, GoLoginClient>();
-
-/**
- * Get or create a GoLoginClient for a specific API token
- * 
- * @param apiToken - The GoLogin API token
- * @param profileId - Optional default profile ID
- * @returns GoLoginClient instance
- */
-export function getGoLoginClientForToken(apiToken: string, profileId?: string): GoLoginClient {
-    // Use token hash as cache key (don't store full token in memory as key)
-    const cacheKey = `token:${apiToken.substring(0, 10)}`;
-    
-    let client = clientCache.get(cacheKey);
-    if (!client) {
-        client = new GoLoginClient(apiToken, profileId);
-        clientCache.set(cacheKey, client);
-    }
-    
-    return client;
-}
-
-/**
- * Create a new GoLoginClient (not cached)
- * Use this when you need a fresh client instance
- * 
- * @param apiToken - The GoLogin API token
- * @param profileId - Optional default profile ID
- * @returns New GoLoginClient instance
- */
-export function createGoLoginClient(apiToken: string, profileId?: string): GoLoginClient {
-    return new GoLoginClient(apiToken, profileId);
-}
-
-/**
- * Clear all cached clients
- * Call this when API keys are updated
- */
-export function clearGoLoginClientCache(): void {
-    clientCache.clear();
-    console.log('[GOLOGIN-CLIENT] Cleared client cache');
-}
-
-// ============================================================================
-// LEGACY SINGLETON (for backward compatibility during migration)
-// ============================================================================
-// NOTE: This uses the env var and should be phased out in favor of per-key clients
-// Using lazy initialization to avoid errors when env vars aren't set
-
-let _legacySingleton: GoLoginClient | null = null;
-
-/**
- * Get the legacy singleton client (uses env var)
- * 
- * @deprecated Use getGoLoginClientForToken() or createGoLoginClient() instead
- */
-export function getLegacyGoLoginClient(): GoLoginClient {
-    if (!_legacySingleton) {
-        _legacySingleton = new GoLoginClient();
-    }
-    return _legacySingleton;
-}
-
-// For backward compatibility, export as goLoginClient
-// This will be removed once all code is migrated to use per-key clients
+// Export singleton instance for convenience
 export const goLoginClient = new GoLoginClient();

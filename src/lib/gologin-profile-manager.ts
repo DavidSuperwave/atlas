@@ -38,8 +38,6 @@ export interface ProfileLookupResult {
     profileId: string;
     source: 'database' | 'environment' | 'none';
     profileName?: string;
-    apiKeyId?: string;      // The API key ID this profile belongs to
-    apiToken?: string;      // The API token for this profile's key
     error?: string;
 }
 
@@ -52,7 +50,6 @@ export interface GoLoginProfile {
     name: string;
     description: string | null;
     is_active: boolean;
-    api_key_id: string | null;  // Which API key this profile belongs to
     created_at: string;
     updated_at: string;
 }
@@ -78,25 +75,21 @@ export interface UserProfileAssignment {
  * 3. Fallback to GOLOGIN_PROFILE_ID environment variable
  * 
  * @param userId - The user's ID
- * @returns ProfileLookupResult with profile ID, source, and API key info
+ * @returns ProfileLookupResult with profile ID and source
  */
 export async function getUserProfileId(userId: string): Promise<ProfileLookupResult> {
     // Check cache first
     const cached = profileCache.get(userId);
     if (cached && cached.expiresAt > Date.now()) {
         console.log(`[PROFILE-MANAGER] Cache hit for user ${userId}: ${cached.profileId}`);
-        // For cached results, we need to look up the API key
-        const apiKeyInfo = await getApiKeyForProfileId(cached.profileId);
         return {
             profileId: cached.profileId,
-            source: 'database',
-            apiKeyId: apiKeyInfo?.apiKeyId,
-            apiToken: apiKeyInfo?.apiToken
+            source: 'database'
         };
     }
 
     try {
-        // Query database for user's assigned profile with API key
+        // Query database for user's assigned profile
         const { data, error } = await supabase
             .from('user_gologin_profiles')
             .select(`
@@ -105,8 +98,7 @@ export async function getUserProfileId(userId: string): Promise<ProfileLookupRes
                     id,
                     profile_id,
                     name,
-                    is_active,
-                    api_key_id
+                    is_active
                 )
             `)
             .eq('user_id', userId)
@@ -132,30 +124,11 @@ export async function getUserProfileId(userId: string): Promise<ProfileLookupRes
                     expiresAt: Date.now() + CACHE_TTL
                 });
 
-                // Get the API key token
-                let apiToken: string | undefined;
-                if (profile.api_key_id) {
-                    const { data: apiKey } = await supabase
-                        .from('gologin_api_keys')
-                        .select('api_token')
-                        .eq('id', profile.api_key_id)
-                        .eq('is_active', true)
-                        .single();
-                    apiToken = apiKey?.api_token;
-                }
-
-                // Fallback to env var if no API key assigned
-                if (!apiToken) {
-                    apiToken = process.env.GOLOGIN_API_TOKEN;
-                }
-
                 console.log(`[PROFILE-MANAGER] Found profile for user ${userId}: ${profile.name} (${profile.profile_id})`);
                 return {
                     profileId: profile.profile_id,
                     source: 'database',
-                    profileName: profile.name,
-                    apiKeyId: profile.api_key_id || undefined,
-                    apiToken
+                    profileName: profile.name
                 };
             }
         }
@@ -165,13 +138,11 @@ export async function getUserProfileId(userId: string): Promise<ProfileLookupRes
 
     // Fallback to environment variable
     const envProfileId = process.env.GOLOGIN_PROFILE_ID;
-    const envApiToken = process.env.GOLOGIN_API_TOKEN;
     if (envProfileId) {
         console.log(`[PROFILE-MANAGER] Using environment variable fallback for user ${userId}`);
         return {
             profileId: envProfileId,
-            source: 'environment',
-            apiToken: envApiToken
+            source: 'environment'
         };
     }
 
@@ -182,37 +153,6 @@ export async function getUserProfileId(userId: string): Promise<ProfileLookupRes
         source: 'none',
         error: 'No GoLogin profile assigned and no fallback configured. Please contact an administrator.'
     };
-}
-
-/**
- * Helper to get API key info for a GoLogin profile ID
- */
-async function getApiKeyForProfileId(goLoginProfileId: string): Promise<{ apiKeyId?: string; apiToken?: string } | null> {
-    try {
-        const { data: profile } = await supabase
-            .from('gologin_profiles')
-            .select('api_key_id')
-            .eq('profile_id', goLoginProfileId)
-            .single();
-
-        if (!profile?.api_key_id) {
-            return { apiToken: process.env.GOLOGIN_API_TOKEN };
-        }
-
-        const { data: apiKey } = await supabase
-            .from('gologin_api_keys')
-            .select('api_token')
-            .eq('id', profile.api_key_id)
-            .eq('is_active', true)
-            .single();
-
-        return {
-            apiKeyId: profile.api_key_id,
-            apiToken: apiKey?.api_token || process.env.GOLOGIN_API_TOKEN
-        };
-    } catch {
-        return { apiToken: process.env.GOLOGIN_API_TOKEN };
-    }
 }
 
 /**
@@ -263,21 +203,16 @@ export function clearAllProfileCache(): void {
  * List all GoLogin profiles
  * 
  * @param includeInactive - Whether to include inactive profiles
- * @param apiKeyId - Optional: filter by API key ID
  * @returns Array of profiles
  */
-export async function listProfiles(includeInactive = false, apiKeyId?: string): Promise<GoLoginProfile[]> {
-    let query = supabase
+export async function listProfiles(includeInactive = false): Promise<GoLoginProfile[]> {
+    const query = supabase
         .from('gologin_profiles')
         .select('*')
         .order('name');
 
     if (!includeInactive) {
-        query = query.eq('is_active', true);
-    }
-
-    if (apiKeyId) {
-        query = query.eq('api_key_id', apiKeyId);
+        query.eq('is_active', true);
     }
 
     const { data, error } = await query;
@@ -288,37 +223,6 @@ export async function listProfiles(includeInactive = false, apiKeyId?: string): 
     }
 
     return data || [];
-}
-
-/**
- * Update a profile's API key assignment
- * 
- * @param profileDbId - The database ID of the profile
- * @param apiKeyId - The API key ID to assign
- * @returns Success status
- */
-export async function updateProfileApiKey(
-    profileDbId: string,
-    apiKeyId: string | null
-): Promise<{ success: boolean; error?: string }> {
-    try {
-        const { error } = await supabase
-            .from('gologin_profiles')
-            .update({ api_key_id: apiKeyId })
-            .eq('id', profileDbId);
-
-        if (error) {
-            console.error(`[PROFILE-MANAGER] Error updating profile API key:`, error);
-            return { success: false, error: error.message };
-        }
-
-        clearAllProfileCache();
-        console.log(`[PROFILE-MANAGER] Updated profile ${profileDbId} API key to ${apiKeyId}`);
-        return { success: true };
-    } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unknown error';
-        return { success: false, error: message };
-    }
 }
 
 /**
@@ -448,14 +352,12 @@ export async function unassignProfileFromUser(
  * @param profileId - The GoLogin profile ID from GoLogin dashboard
  * @param name - Display name for the profile
  * @param description - Optional description
- * @param apiKeyId - The API key ID this profile belongs to (required for new profiles)
  * @returns The created profile or error
  */
 export async function createProfile(
     profileId: string,
     name: string,
-    description?: string,
-    apiKeyId?: string
+    description?: string
 ): Promise<{ success: boolean; profile?: GoLoginProfile; error?: string }> {
     try {
         const { data, error } = await supabase
@@ -464,7 +366,6 @@ export async function createProfile(
                 profile_id: profileId,
                 name,
                 description: description || null,
-                api_key_id: apiKeyId || null,
                 is_active: true
             })
             .select()
@@ -475,7 +376,7 @@ export async function createProfile(
             return { success: false, error: error.message };
         }
 
-        console.log(`[PROFILE-MANAGER] Created profile: ${name} (${profileId}) with API key: ${apiKeyId || 'none'}`);
+        console.log(`[PROFILE-MANAGER] Created profile: ${name} (${profileId})`);
         return { success: true, profile: data };
     } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error';

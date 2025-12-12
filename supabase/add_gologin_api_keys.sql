@@ -119,3 +119,9 @@ COMMENT ON COLUMN gologin_api_keys.max_concurrent_scrapes IS 'Limit concurrent s
 COMMENT ON COLUMN gologin_profiles.api_key_id IS 'Which GoLogin API key this profile belongs to';
 COMMENT ON COLUMN browser_sessions.api_key_id IS 'Which GoLogin API key this session is using';
 COMMENT ON COLUMN scrapes.gologin_api_key_id IS 'Which GoLogin API key was used for this scrape';
+
+
+
+
+
+
