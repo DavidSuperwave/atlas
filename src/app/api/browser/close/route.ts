@@ -68,7 +68,7 @@ export async function POST(request: Request) {
                     
                     if (apiToken) {
                         const client = createGoLoginClient(apiToken, session.profile_id);
-                        const result = await client.stopCloudBrowser(session.profile_id);
+                        const result = await client.stopProfile(session.profile_id);
                         if (!result.success) {
                             console.warn(`[BROWSER-CLOSE] Failed to stop cloud browser for profile ${session.profile_id}: ${result.error}`);
                         }
