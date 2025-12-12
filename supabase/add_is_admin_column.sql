@@ -23,3 +23,6 @@ AND column_name = 'is_admin';
 
 SELECT 'IS_ADMIN COLUMN MIGRATION COMPLETE!' AS status;
 
+
+
+

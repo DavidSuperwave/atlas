@@ -21,10 +21,11 @@ SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key   # server-only (Railwa
 SCRAPER_MODE=gologin
 
 # =============================================================================
-# REQUIRED (when SCRAPER_MODE=gologin) - GoLogin (RECOMMENDED)
+# OPTIONAL FALLBACK (when SCRAPER_MODE=gologin) - GoLogin (RECOMMENDED)
+# NOTE: API keys can now be managed via Admin Panel instead of env vars
 # =============================================================================
-GOLOGIN_API_TOKEN=your-api-token-from-gologin-dashboard
-GOLOGIN_PROFILE_ID=your-profile-id
+GOLOGIN_API_TOKEN=your-api-token-from-gologin-dashboard  # Optional - can use admin panel
+GOLOGIN_PROFILE_ID=your-profile-id  # Optional - managed in database
 
 # =============================================================================
 # REQUIRED (when SCRAPER_MODE=dolphin) - Dolphin Anty (Legacy)
@@ -79,8 +80,10 @@ RESEND_FROM_EMAIL=noreply@atlasv2.com
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `SCRAPER_MODE` | No | `local` | `local`, `dolphin`, or `gologin` (recommended) |
-| `GOLOGIN_API_TOKEN` | When gologin | - | API token from GoLogin dashboard |
-| `GOLOGIN_PROFILE_ID` | When gologin | - | Profile ID from GoLogin |
+| `GOLOGIN_API_TOKEN` | No* | - | API token from GoLogin dashboard (or manage in admin panel) |
+| `GOLOGIN_PROFILE_ID` | No* | - | Profile ID from GoLogin (or manage in database) |
+
+> *When using GoLogin mode, at least one API key must be configured - either via env var or admin panel.
 | `DOLPHIN_ANTY_API_URL` | When dolphin | `http://localhost:3001` | Dolphin Anty API URL |
 | `DOLPHIN_ANTY_PROFILE_ID` | When dolphin | - | Profile ID from Dolphin Anty |
 

@@ -10,6 +10,9 @@ interface GoLoginProfile {
     name: string;
     description: string | null;
     is_active: boolean;
+    api_key_id: string | null;
+    api_key_name: string | null;
+    api_key_active: boolean | null;
     created_at: string;
     updated_at: string;
     assignments: {
@@ -25,6 +28,7 @@ interface AvailableProfile {
     browserType?: string;
     os?: string;
     alreadyAdded: boolean;
+    addedToOtherKey?: boolean;
 }
 
 interface User {
@@ -32,11 +36,18 @@ interface User {
     email: string;
 }
 
+interface ApiKey {
+    id: string;
+    name: string;
+    is_active: boolean;
+}
+
 export default function GoLoginProfilesPage() {
     const { user, loading: authLoading } = useAuth();
     const [profiles, setProfiles] = useState<GoLoginProfile[]>([]);
     const [availableProfiles, setAvailableProfiles] = useState<AvailableProfile[]>([]);
     const [users, setUsers] = useState<User[]>([]);
+    const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
     const [loading, setLoading] = useState(true);
     const [loadingAvailable, setLoadingAvailable] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -45,9 +56,13 @@ export default function GoLoginProfilesPage() {
     // Form states
     const [showAddForm, setShowAddForm] = useState(false);
     const [selectedAvailableProfile, setSelectedAvailableProfile] = useState<string>('');
-    const [newProfile, setNewProfile] = useState({ profile_id: '', name: '', description: '' });
+    const [selectedApiKeyId, setSelectedApiKeyId] = useState<string>('');
+    const [newProfile, setNewProfile] = useState({ profile_id: '', name: '', description: '', api_key_id: '' });
     const [editingProfile, setEditingProfile] = useState<GoLoginProfile | null>(null);
     const [submitting, setSubmitting] = useState(false);
+
+    // Filter states
+    const [filterApiKeyId, setFilterApiKeyId] = useState<string>('');
 
     // Assignment states
     const [assigningProfile, setAssigningProfile] = useState<string | null>(null);
@@ -75,6 +90,7 @@ export default function GoLoginProfilesPage() {
             const data = await res.json();
             setProfiles(data.profiles || []);
             setUsers(data.users || []);
+            setApiKeys(data.apiKeys || []);
         } catch (err) {
             setError('An error occurred');
             console.error(err);
@@ -83,11 +99,14 @@ export default function GoLoginProfilesPage() {
         }
     }
 
-    async function fetchAvailableProfiles() {
+    async function fetchAvailableProfiles(apiKeyId?: string) {
         setLoadingAvailable(true);
         setAvailableError(null);
         try {
-            const res = await fetch('/api/admin/gologin-profiles/available');
+            const url = apiKeyId 
+                ? `/api/admin/gologin-profiles/available?apiKeyId=${apiKeyId}`
+                : '/api/admin/gologin-profiles/available';
+            const res = await fetch(url);
             const data = await res.json();
             
             if (!res.ok) {
@@ -108,21 +127,42 @@ export default function GoLoginProfilesPage() {
     function handleShowAddForm() {
         setShowAddForm(true);
         setSelectedAvailableProfile('');
-        setNewProfile({ profile_id: '', name: '', description: '' });
-        fetchAvailableProfiles();
+        setSelectedApiKeyId('');
+        setNewProfile({ profile_id: '', name: '', description: '', api_key_id: '' });
+        // Don't fetch yet - wait for API key selection
+        if (apiKeys.length === 1) {
+            // If only one API key, auto-select it
+            setSelectedApiKeyId(apiKeys[0].id);
+            setNewProfile(prev => ({ ...prev, api_key_id: apiKeys[0].id }));
+            fetchAvailableProfiles(apiKeys[0].id);
+        } else if (apiKeys.length === 0) {
+            // No API keys, fetch with default
+            fetchAvailableProfiles();
+        }
+    }
+
+    function handleApiKeyChange(apiKeyId: string) {
+        setSelectedApiKeyId(apiKeyId);
+        setNewProfile(prev => ({ ...prev, api_key_id: apiKeyId }));
+        setSelectedAvailableProfile('');
+        setAvailableProfiles([]);
+        if (apiKeyId) {
+            fetchAvailableProfiles(apiKeyId);
+        }
     }
 
     function handleSelectAvailableProfile(profileId: string) {
         setSelectedAvailableProfile(profileId);
         const profile = availableProfiles.find(p => p.id === profileId);
         if (profile) {
-            setNewProfile({
+            setNewProfile(prev => ({
                 profile_id: profile.id,
                 name: profile.name,
-                description: `Browser: ${profile.browserType || 'Unknown'}, OS: ${profile.os || 'Unknown'}`
-            });
+                description: `Browser: ${profile.browserType || 'Unknown'}, OS: ${profile.os || 'Unknown'}`,
+                api_key_id: prev.api_key_id  // Preserve selected API key
+            }));
         } else {
-            setNewProfile({ profile_id: '', name: '', description: '' });
+            setNewProfile({ profile_id: '', name: '', description: '', api_key_id: '' });
         }
     }
 
@@ -135,13 +175,19 @@ export default function GoLoginProfilesPage() {
             const res = await fetch('/api/admin/gologin-profiles', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(newProfile),
+                body: JSON.stringify({
+                    profile_id: newProfile.profile_id,
+                    name: newProfile.name,
+                    description: newProfile.description,
+                    api_key_id: newProfile.api_key_id || null
+                }),
             });
 
             const data = await res.json();
             if (res.ok) {
-                setNewProfile({ profile_id: '', name: '', description: '' });
+                setNewProfile({ profile_id: '', name: '', description: '', api_key_id: '' });
                 setSelectedAvailableProfile('');
+                setSelectedApiKeyId('');
                 setShowAddForm(false);
                 fetchData();
             } else {
@@ -312,22 +358,48 @@ export default function GoLoginProfilesPage() {
                 </button>
             </div>
 
-            {/* Add Profile Form - Now with dropdown! */}
+            {/* Add Profile Form - Now with API key selector! */}
             {showAddForm && (
                 <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
                     <h2 className="font-semibold mb-4">Add GoLogin Profile</h2>
+
+                    {/* API Key Selector - First step */}
+                    {apiKeys.length > 1 && (
+                        <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Select API Key *
+                            </label>
+                            <select
+                                value={selectedApiKeyId}
+                                onChange={(e) => handleApiKeyChange(e.target.value)}
+                                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                            >
+                                <option value="">Choose an API key...</option>
+                                {apiKeys.filter(k => k.is_active).map((k) => (
+                                    <option key={k.id} value={k.id}>
+                                        {k.name}
+                                    </option>
+                                ))}
+                            </select>
+                            <p className="text-xs text-gray-500 mt-1">
+                                Profiles are linked to their API key. Select which account this profile comes from.
+                            </p>
+                        </div>
+                    )}
                     
                     {/* Fetch from GoLogin Section */}
                     <div className="mb-6 p-4 bg-blue-50 rounded-lg">
                         <h3 className="font-medium text-blue-900 mb-2">Select from your GoLogin account</h3>
                         
-                        {loadingAvailable ? (
+                        {apiKeys.length > 1 && !selectedApiKeyId ? (
+                            <div className="text-blue-700 text-sm">Select an API key above first...</div>
+                        ) : loadingAvailable ? (
                             <div className="text-blue-700 text-sm">Loading profiles from GoLogin...</div>
                         ) : availableError ? (
                             <div className="text-red-600 text-sm">
                                 {availableError}
                                 <button 
-                                    onClick={fetchAvailableProfiles}
+                                    onClick={() => fetchAvailableProfiles(selectedApiKeyId)}
                                     className="ml-2 text-blue-600 hover:underline"
                                 >
                                     Retry
@@ -342,8 +414,8 @@ export default function GoLoginProfilesPage() {
                                 >
                                     <option value="">Select a profile from GoLogin...</option>
                                     {availableProfiles.map((p) => (
-                                        <option key={p.id} value={p.id} disabled={p.alreadyAdded}>
-                                            {p.name} ({p.browserType || 'Unknown browser'}) {p.alreadyAdded ? '(Already Added)' : ''}
+                                        <option key={p.id} value={p.id} disabled={p.alreadyAdded || p.addedToOtherKey}>
+                                            {p.name} ({p.browserType || 'Unknown browser'}) {p.alreadyAdded ? '(Already Added)' : p.addedToOtherKey ? '(Added to other key)' : ''}
                                         </option>
                                     ))}
                                 </select>
@@ -423,7 +495,7 @@ export default function GoLoginProfilesPage() {
                                 type="button"
                                 onClick={() => {
                                     setShowAddForm(false);
-                                    setNewProfile({ profile_id: '', name: '', description: '' });
+                                    setNewProfile({ profile_id: '', name: '', description: '', api_key_id: '' });
                                     setSelectedAvailableProfile('');
                                 }}
                                 className="px-4 py-2 border rounded-lg hover:bg-gray-50"
@@ -508,6 +580,26 @@ export default function GoLoginProfilesPage() {
                 </div>
             )}
 
+            {/* Filter by API Key */}
+            {apiKeys.length > 1 && (
+                <div className="mb-4 flex items-center gap-4">
+                    <label className="text-sm text-gray-600">Filter by API Key:</label>
+                    <select
+                        value={filterApiKeyId}
+                        onChange={(e) => setFilterApiKeyId(e.target.value)}
+                        className="px-3 py-1.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                    >
+                        <option value="">All API Keys</option>
+                        {apiKeys.map((k) => (
+                            <option key={k.id} value={k.id}>
+                                {k.name} {!k.is_active ? '(Inactive)' : ''}
+                            </option>
+                        ))}
+                        <option value="none">No API Key Assigned</option>
+                    </select>
+                </div>
+            )}
+
             {/* Profiles List */}
             {profiles.length === 0 ? (
                 <div className="bg-white rounded-lg shadow-sm border p-8 text-center">
@@ -521,7 +613,13 @@ export default function GoLoginProfilesPage() {
                 </div>
             ) : (
                 <div className="space-y-4">
-                    {profiles.map((profile) => (
+                    {profiles
+                        .filter(p => {
+                            if (!filterApiKeyId) return true;
+                            if (filterApiKeyId === 'none') return !p.api_key_id;
+                            return p.api_key_id === filterApiKeyId;
+                        })
+                        .map((profile) => (
                         <div
                             key={profile.id}
                             className={`bg-white rounded-lg shadow-sm border p-6 ${!profile.is_active ? 'opacity-60' : ''}`}
@@ -533,6 +631,11 @@ export default function GoLoginProfilesPage() {
                                         {!profile.is_active && (
                                             <span className="px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded">
                                                 Inactive
+                                            </span>
+                                        )}
+                                        {profile.api_key_name && (
+                                            <span className={`px-2 py-0.5 text-xs rounded ${profile.api_key_active ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700'}`}>
+                                                {profile.api_key_name}
                                             </span>
                                         )}
                                     </div>

@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser, createServiceClient } from '@/lib/supabase-server';
 import { handleCors, corsJsonResponse } from '@/lib/cors';
-import { goLoginClient } from '@/lib/gologin-client';
+import { createGoLoginClient } from '@/lib/gologin-client';
 import { scrapeQueue } from '@/lib/scrape-queue';
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit';
+import { getUserProfileId } from '@/lib/gologin-profile-manager';
 
 const supabase = createServiceClient();
 
@@ -98,16 +99,30 @@ export async function POST(request: Request) {
         // Browser is available - start cloud browser
         console.log(`[BROWSER-ACCESS] Starting cloud browser for user: ${user.id}`);
 
-        const profileId = process.env.GOLOGIN_PROFILE_ID;
-        if (!profileId) {
+        // Get the user's assigned profile (or fallback to env var)
+        const profileResult = await getUserProfileId(user.id);
+        
+        if (!profileResult.profileId) {
             return corsJsonResponse({ 
-                error: 'GoLogin profile not configured',
-                message: 'GOLOGIN_PROFILE_ID environment variable is not set.'
+                error: 'No GoLogin profile assigned',
+                message: profileResult.error || 'No profile is assigned to your account. Please contact an administrator.'
             }, request, { status: 500 });
         }
 
+        if (!profileResult.apiToken) {
+            return corsJsonResponse({ 
+                error: 'GoLogin API key not configured',
+                message: 'No API token available for this profile. Please contact an administrator.'
+            }, request, { status: 500 });
+        }
+
+        const profileId = profileResult.profileId;
+        
+        // Create a client with the correct API token for this profile's key
+        const client = createGoLoginClient(profileResult.apiToken, profileId);
+
         // Start cloud browser
-        const result = await goLoginClient.startCloudBrowser(profileId);
+        const result = await client.startCloudBrowser(profileId);
 
         if (!result.success || !result.url) {
             return corsJsonResponse({ 
@@ -116,7 +131,7 @@ export async function POST(request: Request) {
             }, request, { status: 500 });
         }
 
-        // Create browser session record
+        // Create browser session record with API key tracking
         const { data: newSession, error: sessionError } = await supabase
             .from('browser_sessions')
             .insert({
@@ -125,7 +140,8 @@ export async function POST(request: Request) {
                 session_type: 'manual',
                 status: 'active',
                 remote_url: result.url,
-                last_heartbeat: new Date().toISOString()
+                last_heartbeat: new Date().toISOString(),
+                api_key_id: profileResult.apiKeyId || null
             })
             .select()
             .single();

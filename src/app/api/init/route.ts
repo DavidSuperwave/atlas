@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { scrapeQueue, validateEnvironment } from '@/lib/scrape-queue';
+import { scrapeQueue, validateEnvironment, validateEnvironmentSync } from '@/lib/scrape-queue';
 import { getCurrentUser, isUserAdmin } from '@/lib/supabase-server';
+import { getAllActiveApiKeys, ensureApiKeyExists } from '@/lib/gologin-api-key-manager';
 
 export const runtime = 'nodejs';
 
@@ -20,10 +21,22 @@ export async function GET() {
     const errors: string[] = [];
     const warnings: string[] = [];
     
-    // Validate environment
-    const envValidation = validateEnvironment();
+    // Ensure API key exists (auto-migrate from env if needed)
+    await ensureApiKeyExists();
+    
+    // Validate environment (async for full validation including DB check)
+    const envValidation = await validateEnvironment();
     errors.push(...envValidation.errors);
     warnings.push(...envValidation.warnings);
+    
+    // Get API key count for status reporting
+    let apiKeyCount = 0;
+    try {
+        const activeKeys = await getAllActiveApiKeys();
+        apiKeyCount = activeKeys.length;
+    } catch {
+        // Ignore errors
+    }
     
     // Get current queue status
     const queueStatus = scrapeQueue.getStatus();
@@ -35,7 +48,7 @@ export async function GET() {
         try {
             scrapeQueue.startProcessor();
             processorStarted = true;
-            console.log('[INIT-API] Queue processor started successfully');
+            console.log(`[INIT-API] Queue processor started successfully (${apiKeyCount} API keys)`);
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             errors.push(`Failed to start queue processor: ${errorMessage}`);
@@ -49,9 +62,10 @@ export async function GET() {
         NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ? '✓ set' : '✗ MISSING',
         SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY ? '✓ set' : '✗ MISSING',
         NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? '✓ set' : '✗ MISSING',
-        GOLOGIN_API_TOKEN: process.env.GOLOGIN_API_TOKEN ? '✓ set' : '✗ MISSING',
+        GOLOGIN_API_TOKEN: process.env.GOLOGIN_API_TOKEN ? '✓ set' : '(not set - using database)',
         GOLOGIN_PROFILE_ID: process.env.GOLOGIN_PROFILE_ID ? '✓ set' : '(not set - using database)',
         NODE_ENV: process.env.NODE_ENV || '(not set)',
+        API_KEYS_COUNT: `${apiKeyCount} active`,
     };
     
     const elapsedMs = Date.now() - startTime;
@@ -113,8 +127,8 @@ export async function POST() {
     
     const errors: string[] = [];
     
-    // Validate environment first
-    const envValidation = validateEnvironment();
+    // Validate environment first (use async version)
+    const envValidation = await validateEnvironment();
     if (!envValidation.valid) {
         return NextResponse.json({
             success: false,

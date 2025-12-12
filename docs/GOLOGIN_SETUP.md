@@ -94,23 +94,80 @@ Alternative method:
 - Click the three dots menu (⋮)
 - Click "Copy Profile ID"
 
-### Step 7: Configure Environment Variables
+### Step 7: Configure Environment Variables (Single Key Setup)
 
-Add these to your `.env.local` (development) or `.env.production` (production):
+For a simple single API key setup, add these to your `.env.local` (development) or `.env.production` (production):
 
 ```bash
 # Required: Set scraper mode to gologin
 SCRAPER_MODE=gologin
 
-# Required: Your GoLogin API token from Settings → API
+# Optional: Default GoLogin API token (can be managed via admin UI instead)
 GOLOGIN_API_TOKEN=your-api-token-here
 
-# Required: Your profile ID from the dashboard
+# Optional: Default profile ID (can be managed via admin UI instead)
 GOLOGIN_PROFILE_ID=your-profile-id-here
 
 # Optional: Enable verbose API logging for debugging
 GOLOGIN_DEBUG=true
 ```
+
+> **Note**: Environment variables are now optional fallbacks. You can manage API keys through the admin panel instead.
+
+---
+
+## Multi-Key Setup (Horizontal Scaling)
+
+For higher throughput, you can configure multiple GoLogin API keys. Each key allows one concurrent scrape, so 3 keys = 3 parallel scrapes.
+
+### Why Use Multiple Keys?
+
+- **Parallel scraping**: Run multiple scrapes simultaneously
+- **Fault isolation**: If one key fails, others continue working
+- **Load distribution**: Spread load across multiple accounts
+- **Scaling**: Add more keys as you grow
+
+### Setup Multiple API Keys
+
+1. **Create Additional GoLogin Accounts** (or use team seats)
+   - Each account has its own API key
+   - Each can manage multiple browser profiles
+
+2. **Access Admin Panel**
+   - Navigate to `/admin/gologin-api-keys`
+   - You'll see any existing keys (including auto-migrated env var key)
+
+3. **Add API Keys**
+   - Click **"+ Add API Key"**
+   - Enter a name (e.g., "Production Key 2")
+   - Paste the API token from GoLogin Settings → API
+   - Optionally set as default
+
+4. **Add Profiles per Key**
+   - Navigate to `/admin/gologin-profiles`
+   - When adding a profile, select which API key it belongs to
+   - Profiles are permanently linked to their API key
+
+5. **Assign Profiles to Users**
+   - Each user gets assigned to a specific profile
+   - The profile's API key determines which GoLogin account is used
+
+### How Parallel Scraping Works
+
+```
+User A (Profile 1 → API Key 1) → Scrape 1 runs on Key 1
+User B (Profile 2 → API Key 2) → Scrape 2 runs on Key 2 (in parallel!)
+User C (Profile 3 → API Key 1) → Waits for Scrape 1 to finish (same key)
+```
+
+### Migration from Single Key
+
+When upgrading from a single environment variable setup:
+
+1. On first startup with `GOLOGIN_API_TOKEN` set, the system auto-creates a "Default (from env)" API key
+2. Existing profiles are associated with this default key
+3. You can then add more API keys via the admin panel
+4. The env var continues to work as a fallback
 
 ### Step 8: Test Configuration
 

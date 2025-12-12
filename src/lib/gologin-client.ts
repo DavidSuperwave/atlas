@@ -786,5 +786,74 @@ export class GoLoginClient {
     }
 }
 
-// Export singleton instance for convenience
+// ============================================================================
+// FACTORY FUNCTIONS FOR MULTI-KEY SUPPORT
+// ============================================================================
+
+// Cache of GoLoginClient instances by API key ID
+const clientCache = new Map<string, GoLoginClient>();
+
+/**
+ * Get or create a GoLoginClient for a specific API token
+ * 
+ * @param apiToken - The GoLogin API token
+ * @param profileId - Optional default profile ID
+ * @returns GoLoginClient instance
+ */
+export function getGoLoginClientForToken(apiToken: string, profileId?: string): GoLoginClient {
+    // Use token hash as cache key (don't store full token in memory as key)
+    const cacheKey = `token:${apiToken.substring(0, 10)}`;
+    
+    let client = clientCache.get(cacheKey);
+    if (!client) {
+        client = new GoLoginClient(apiToken, profileId);
+        clientCache.set(cacheKey, client);
+    }
+    
+    return client;
+}
+
+/**
+ * Create a new GoLoginClient (not cached)
+ * Use this when you need a fresh client instance
+ * 
+ * @param apiToken - The GoLogin API token
+ * @param profileId - Optional default profile ID
+ * @returns New GoLoginClient instance
+ */
+export function createGoLoginClient(apiToken: string, profileId?: string): GoLoginClient {
+    return new GoLoginClient(apiToken, profileId);
+}
+
+/**
+ * Clear all cached clients
+ * Call this when API keys are updated
+ */
+export function clearGoLoginClientCache(): void {
+    clientCache.clear();
+    console.log('[GOLOGIN-CLIENT] Cleared client cache');
+}
+
+// ============================================================================
+// LEGACY SINGLETON (for backward compatibility during migration)
+// ============================================================================
+// NOTE: This uses the env var and should be phased out in favor of per-key clients
+// Using lazy initialization to avoid errors when env vars aren't set
+
+let _legacySingleton: GoLoginClient | null = null;
+
+/**
+ * Get the legacy singleton client (uses env var)
+ * 
+ * @deprecated Use getGoLoginClientForToken() or createGoLoginClient() instead
+ */
+export function getLegacyGoLoginClient(): GoLoginClient {
+    if (!_legacySingleton) {
+        _legacySingleton = new GoLoginClient();
+    }
+    return _legacySingleton;
+}
+
+// For backward compatibility, export as goLoginClient
+// This will be removed once all code is migrated to use per-key clients
 export const goLoginClient = new GoLoginClient();

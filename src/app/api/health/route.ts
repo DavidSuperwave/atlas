@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { scrapeQueue, validateEnvironment } from '@/lib/scrape-queue';
+import { scrapeQueue, validateEnvironment, validateEnvironmentSync } from '@/lib/scrape-queue';
+import { getAllActiveApiKeys } from '@/lib/gologin-api-key-manager';
 
 export const runtime = 'nodejs';
 
@@ -22,8 +23,17 @@ export async function GET() {
     // Get queue status
     const queueStatus = scrapeQueue.getStatus();
     
-    // Validate environment
-    const envValidation = validateEnvironment();
+    // Validate environment (use sync for quick health check)
+    const envValidation = validateEnvironmentSync();
+    
+    // Get API key count for multi-key status
+    let apiKeyCount = 0;
+    try {
+        const activeKeys = await getAllActiveApiKeys();
+        apiKeyCount = activeKeys.length;
+    } catch {
+        // Ignore errors - just report 0
+    }
     
     // Determine overall health
     const isHealthy = envValidation.valid && 
@@ -55,11 +65,15 @@ export async function GET() {
             hasGoLoginToken: !!process.env.GOLOGIN_API_TOKEN,
             hasGoLoginProfile: !!process.env.GOLOGIN_PROFILE_ID,
         },
+        apiKeys: {
+            count: apiKeyCount,
+            hasEnvFallback: !!process.env.GOLOGIN_API_TOKEN,
+        },
         checks: {
             supabase: envValidation.valid && !!process.env.NEXT_PUBLIC_SUPABASE_URL,
             scraperMode: !!process.env.SCRAPER_MODE,
             goLoginConfigured: queueStatus.isGoLoginMode 
-                ? !!process.env.GOLOGIN_API_TOKEN 
+                ? (apiKeyCount > 0 || !!process.env.GOLOGIN_API_TOKEN)
                 : true,
             queueProcessorRunning: queueStatus.isGoLoginMode 
                 ? queueStatus.processorStarted 

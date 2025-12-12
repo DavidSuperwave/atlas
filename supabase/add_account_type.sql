@@ -31,3 +31,6 @@ AND column_name = 'account_type';
 
 SELECT 'ACCOUNT TYPE MIGRATION COMPLETE!' AS status;
 
+
+
+

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser, createServiceClient } from '@/lib/supabase-server';
 import { handleCors, corsJsonResponse } from '@/lib/cors';
-import { goLoginClient } from '@/lib/gologin-client';
+import { createGoLoginClient } from '@/lib/gologin-client';
+import { getApiKey } from '@/lib/gologin-api-key-manager';
 
 const supabase = createServiceClient();
 
@@ -44,7 +45,7 @@ export async function POST(request: Request) {
         // Fetch active manual sessions to stop cloud browsers before marking closed
         const sessionQuery = supabase
             .from('browser_sessions')
-            .select('id, profile_id')
+            .select('id, profile_id, api_key_id')
             .eq('user_id', user.id)
             .eq('status', 'active')
             .eq('session_type', 'manual');
@@ -56,9 +57,21 @@ export async function POST(request: Request) {
         if (activeSessions && activeSessions.length > 0) {
             for (const session of activeSessions) {
                 if (session.profile_id) {
-                    const result = await goLoginClient.stopCloudBrowser(session.profile_id);
-                    if (!result.success) {
-                        console.warn(`[BROWSER-CLOSE] Failed to stop cloud browser for profile ${session.profile_id}: ${result.error}`);
+                    // Get the API token for this session's API key
+                    let apiToken = process.env.GOLOGIN_API_TOKEN; // fallback
+                    if (session.api_key_id) {
+                        const apiKey = await getApiKey(session.api_key_id);
+                        if (apiKey?.api_token) {
+                            apiToken = apiKey.api_token;
+                        }
+                    }
+                    
+                    if (apiToken) {
+                        const client = createGoLoginClient(apiToken, session.profile_id);
+                        const result = await client.stopCloudBrowser(session.profile_id);
+                        if (!result.success) {
+                            console.warn(`[BROWSER-CLOSE] Failed to stop cloud browser for profile ${session.profile_id}: ${result.error}`);
+                        }
                     }
                 }
             }

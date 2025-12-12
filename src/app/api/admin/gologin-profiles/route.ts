@@ -36,7 +36,7 @@ async function checkAdmin(userId: string): Promise<boolean> {
 }
 
 /**
- * GET - List all GoLogin profiles with their assignments
+ * GET - List all GoLogin profiles with their assignments and API key info
  */
 export async function GET() {
     try {
@@ -62,13 +62,26 @@ export async function GET() {
             .select('id, email')
             .order('email');
 
-        // Map assignments to profiles
+        // Get all API keys for reference
+        const { data: apiKeys } = await supabase
+            .from('gologin_api_keys')
+            .select('id, name, is_active')
+            .order('name');
+
+        // Create API key lookup map
+        const apiKeyMap = new Map((apiKeys || []).map(k => [k.id, k]));
+
+        // Map assignments and API key info to profiles
         const profilesWithAssignments = profiles.map(profile => {
             const profileAssignments = assignments.filter(
                 a => (a.gologin_profiles as any)?.id === profile.id
             );
+            const apiKey = profile.api_key_id ? apiKeyMap.get(profile.api_key_id) : null;
+            
             return {
                 ...profile,
+                api_key_name: apiKey?.name || null,
+                api_key_active: apiKey?.is_active ?? null,
                 assignments: profileAssignments.map(a => ({
                     user_id: a.user_id,
                     assigned_at: a.assigned_at,
@@ -81,6 +94,7 @@ export async function GET() {
             success: true,
             profiles: profilesWithAssignments,
             users: users || [],
+            apiKeys: apiKeys || [],
             total: profiles.length
         });
 
@@ -94,6 +108,7 @@ export async function GET() {
 
 /**
  * POST - Create a new GoLogin profile
+ * Now requires api_key_id to link profile to its parent API key
  */
 export async function POST(request: Request) {
     try {
@@ -107,7 +122,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
         }
 
-        const { profile_id, name, description } = await request.json();
+        const { profile_id, name, description, api_key_id } = await request.json();
 
         if (!profile_id || !name) {
             return NextResponse.json({ 
@@ -115,7 +130,12 @@ export async function POST(request: Request) {
             }, { status: 400 });
         }
 
-        const result = await createProfile(profile_id, name, description);
+        // api_key_id is now strongly recommended (will be required in future)
+        if (!api_key_id) {
+            console.warn('[ADMIN-PROFILES] Creating profile without api_key_id - will use default key');
+        }
+
+        const result = await createProfile(profile_id, name, description, api_key_id);
 
         if (!result.success) {
             return NextResponse.json({ 

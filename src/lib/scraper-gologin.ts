@@ -107,8 +107,8 @@ async function buildColumnMap(page: Page): Promise<ColumnMap | null> {
         // Person Links (LinkedIn)
         columnMap.personLinks = map['links'] ?? map['person · links'] ?? findByContent('a[href*="linkedin.com/in/"]') ?? 4;
 
-        // Company Links (required) - hardcoded to index 5 for troubleshooting
-        columnMap.companyLinks = 5;
+        // Company Links (required) - try header first, then semantic search
+        columnMap.companyLinks = map['company · links'] ?? map['company links'] ?? map['website'] ?? findByContent('a[aria-label="website link"]') ?? 5;
 
         // Industries
         columnMap.industries = map['company · industries'] ?? map['industries'] ?? map['industry'] ?? 6;
@@ -202,39 +202,17 @@ async function extractLeadsFromPage(page: Page, columnMap: ColumnMap): Promise<R
             // === REQUIRED: DOMAIN ===
             let domain = '';
             
-            // Website selector fallback chain
-            const websiteSelectors = [
-                'a[aria-label="website link"]',
-                'a[aria-label*="website"]',
-                'a[href^="http"]:not([href*="apollo.io"]):not([href*="linkedin.com"]):not([href*="twitter.com"]):not([href*="facebook.com"]):not([href*="google.com"]):not([href*="instagram.com"])'
-            ];
-            
-            // Helper to get URL from element (checks href and data-href)
-            function getUrlFromLink(el: Element | null): string {
-                if (!el) return '';
-                return (el as HTMLAnchorElement).href || el.getAttribute('data-href') || '';
-            }
-            
-            // Helper to find website link using selector chain
-            function findWebsiteLink(container: Element): Element | null {
-                for (const selector of websiteSelectors) {
-                    const link = container.querySelector(selector);
-                    if (link) return link;
-                }
-                return null;
-            }
-            
             const companyLinksCell = cells[colMap.companyLinks];
-            let websiteLink = findWebsiteLink(companyLinksCell);
+            const websiteLink = companyLinksCell?.querySelector('a[aria-label="website link"]');
             
             if (websiteLink) {
-                domain = extractDomain(getUrlFromLink(websiteLink));
+                domain = extractDomain((websiteLink as HTMLAnchorElement).href);
             } else {
                 // Fallback: search all cells
                 for (const cell of cells) {
-                    websiteLink = findWebsiteLink(cell);
-                    if (websiteLink) {
-                        domain = extractDomain(getUrlFromLink(websiteLink));
+                    const link = cell.querySelector('a[aria-label="website link"]');
+                    if (link) {
+                        domain = extractDomain((link as HTMLAnchorElement).href);
                         break;
                     }
                 }
