@@ -755,3 +755,14 @@ export class GoLoginClient {
 
 // Export singleton instance for convenience
 export const goLoginClient = new GoLoginClient();
+
+/**
+ * Factory function to create a new GoLogin client with a specific token
+ * 
+ * @param apiToken - API token for GoLogin
+ * @param profileId - Optional profile ID
+ * @returns New GoLoginClient instance
+ */
+export function createGoLoginClient(apiToken: string, profileId?: string): GoLoginClient {
+    return new GoLoginClient(apiToken, profileId);
+}

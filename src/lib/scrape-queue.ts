@@ -155,6 +155,14 @@ function isGoLoginMode(): boolean {
 }
 
 /**
+ * Validate required environment variables (synchronous version)
+ * Use this for health checks and quick validation
+ */
+export function validateEnvironmentSync(): { valid: boolean; errors: string[]; warnings: string[] } {
+    return validateEnvironment();
+}
+
+/**
  * Validate required environment variables
  */
 export function validateEnvironment(): { valid: boolean; errors: string[]; warnings: string[] } {
