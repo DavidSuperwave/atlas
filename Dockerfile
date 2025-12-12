@@ -1,5 +1,5 @@
-# Use Node.js 18 as base image
-FROM node:18-slim
+# Use Node.js 20 as base image (required for Next.js >= 16)
+FROM node:20-slim
 
 # Install required system dependencies for Puppeteer
 RUN apt-get update && apt-get install -y \
@@ -52,8 +52,8 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install dependencies (including dev dependencies for build)
+RUN npm ci
 
 # Copy application files
 COPY . .
