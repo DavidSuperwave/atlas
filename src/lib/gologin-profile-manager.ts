@@ -50,6 +50,7 @@ export interface GoLoginProfile {
     name: string;
     description: string | null;
     is_active: boolean;
+    api_key_id: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -352,12 +353,14 @@ export async function unassignProfileFromUser(
  * @param profileId - The GoLogin profile ID from GoLogin dashboard
  * @param name - Display name for the profile
  * @param description - Optional description
+ * @param apiKeyId - Optional API key ID to link profile to
  * @returns The created profile or error
  */
 export async function createProfile(
     profileId: string,
     name: string,
-    description?: string
+    description?: string,
+    apiKeyId?: string
 ): Promise<{ success: boolean; profile?: GoLoginProfile; error?: string }> {
     try {
         const { data, error } = await supabase
@@ -366,6 +369,7 @@ export async function createProfile(
                 profile_id: profileId,
                 name,
                 description: description || null,
+                api_key_id: apiKeyId || null,
                 is_active: true
             })
             .select()
