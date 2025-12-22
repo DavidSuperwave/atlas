@@ -8,7 +8,7 @@
  * - Correct mapping to ScrapedLead schema
  */
 
-import { getBrowserForProfile } from './browser-manager-gologin';
+import { getBrowserForProfile, getBrowserManagerForProfile } from './browser-manager-gologin';
 import { getUserProfileId, ProfileLookupResult } from './gologin-profile-manager';
 import { Page } from 'puppeteer';
 import type { ScrapedLead, ScrapeError } from './scraper-types';
@@ -308,6 +308,7 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
 
     let page: Page | null = null;
     const allLeads: ScrapedLead[] = [];
+    const profileId = profileResult.profileId; // Store for cleanup
 
     try {
         const browser = await getBrowserForProfile(profileResult.profileId);
@@ -414,6 +415,24 @@ export async function scrapeApollo(url: string, pages: number = 1, userId?: stri
         await updateScrapeState(scrapeId, { scraper_status: 'failed' });
         throw error;
     } finally {
-        if (page) await page.close();
+        // Clean up page
+        if (page) {
+            try {
+                await page.close();
+            } catch (e) {
+                console.warn('[GOLOGIN-SCRAPER] Error closing page:', e);
+            }
+        }
+        
+        // FRESH CONNECTION POLICY: Always disconnect browser after scrape
+        // This ensures the next scrape gets a completely fresh browser instance
+        console.log('[GOLOGIN-SCRAPER] Disconnecting browser for fresh instance on next scrape...');
+        try {
+            const manager = getBrowserManagerForProfile(profileId);
+            await manager.disconnect();
+            console.log('[GOLOGIN-SCRAPER] ✓ Browser disconnected');
+        } catch (e) {
+            console.warn('[GOLOGIN-SCRAPER] Error disconnecting browser:', e);
+        }
     }
 }

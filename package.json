@@ -15,6 +15,7 @@
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.86.0",
     "@vercel/analytics": "^1.6.1",
+    "@whop/sdk": "^0.0.20",
     "dotenv": "^17.2.3",
     "gologin": "^2.1.33",
     "next": "^16.0.7",

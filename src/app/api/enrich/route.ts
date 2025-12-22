@@ -94,6 +94,9 @@ export async function POST(request: Request) {
 async function enrichScrape(scrapeId: string, userId: string, currentCredits: number, request: Request) {
     console.log(`[ENRICH] Starting enrichment for scrape ${scrapeId}, user ${userId}, credits: ${currentCredits}`);
 
+    // Clear any previous cancellation flag for this scrape so enrichment can proceed
+    verificationQueue.clearCancellation(scrapeId);
+
     // Query all leads for this scrape that haven't been enriched yet
     const { data: leads, error } = await supabase
         .from('leads')
@@ -176,11 +179,12 @@ async function enrichScrape(scrapeId: string, userId: string, currentCredits: nu
             })
             .eq('id', lead.id);
 
-        // Add to verification queue with userId for credit deduction
+        // Add to verification queue with userId for credit deduction and scrapeId for cancellation
         console.log(`[ENRICH] Adding lead ${lead.id} to verification queue with ${permutations.length} permutations`);
         verificationQueue.add({
             type: 'lead',
             leadId: lead.id,
+            scrapeId: scrapeId,
             permutations,
             userId
         });
@@ -229,6 +233,20 @@ async function enrichWithCustomPermutations(
         return corsJsonResponse({ error: 'No valid permutations provided' }, request, { status: 400 });
     }
 
+    // Get lead's scrapeId for cancellation tracking
+    const { data: lead } = await supabase
+        .from('leads')
+        .select('scrape_id')
+        .eq('id', leadId)
+        .single();
+
+    const scrapeId = lead?.scrape_id;
+
+    // Clear any previous cancellation flag for this scrape so enrichment can proceed
+    if (scrapeId) {
+        verificationQueue.clearCancellation(scrapeId);
+    }
+
     // Clear previous verification data and set status to processing
     await supabase
         .from('leads')
@@ -244,11 +262,12 @@ async function enrichWithCustomPermutations(
         })
         .eq('id', leadId);
 
-    // Add to verification queue with userId and wait for completion
+    // Add to verification queue with userId and scrapeId for cancellation tracking
     // This ensures the serverless function doesn't exit before processing is done
     await verificationQueue.add({
         type: 'lead',
         leadId,
+        scrapeId,
         permutations: validPermutations,
         userId
     }, true);
@@ -305,6 +324,11 @@ async function enrichSingleLeadAuto(leadId: string, userId: string, currentCredi
         return corsJsonResponse({ error: 'Could not generate permutations' }, request, { status: 400 });
     }
 
+    // Clear any previous cancellation flag for this scrape so enrichment can proceed
+    if (lead.scrape_id) {
+        verificationQueue.clearCancellation(lead.scrape_id);
+    }
+
     // Clear previous verification data and set status to processing
     await supabase
         .from('leads')
@@ -320,10 +344,11 @@ async function enrichSingleLeadAuto(leadId: string, userId: string, currentCredi
         })
         .eq('id', leadId);
 
-    // Add to queue with userId and wait for completion
+    // Add to queue with userId and scrapeId for cancellation tracking, wait for completion
     await verificationQueue.add({
         type: 'lead',
         leadId,
+        scrapeId: lead.scrape_id,
         permutations,
         userId
     }, true);

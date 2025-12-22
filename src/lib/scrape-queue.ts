@@ -30,6 +30,18 @@ async function getScrapeApollo() {
     return scrapeApolloFn;
 }
 
+// Lazy-loaded browser manager disconnect function
+async function disconnectBrowserForProfile(profileId: string): Promise<void> {
+    try {
+        const { getBrowserManagerForProfile } = await import('./browser-manager-gologin');
+        const manager = getBrowserManagerForProfile(profileId);
+        await manager.disconnect();
+        console.log(`[SCRAPE-QUEUE] ✓ Browser disconnected for profile ${profileId}`);
+    } catch (error) {
+        console.warn(`[SCRAPE-QUEUE] Failed to disconnect browser for profile ${profileId}:`, error);
+    }
+}
+
 /**
  * Get the profile ID that will be used for a user's scrape
  */
@@ -748,6 +760,8 @@ class ScrapeQueue {
 
         // Declare browserSession outside try block so it's accessible in catch/finally
         let browserSession: { id: string } | null = null;
+        // Track profile ID for cleanup
+        let currentProfileId: string | null = null;
 
         try {
             const supabase = getSupabase();
@@ -819,6 +833,9 @@ class ScrapeQueue {
             }
             
             console.log(`[SCRAPE-QUEUE] User ${nextItem.user_id} will use profile: ${profileResult.profileId} (source: ${profileResult.source})`);
+            
+            // Store profile ID for cleanup in finally block
+            currentProfileId = profileResult.profileId;
             
             // Check if THIS specific profile is available
             const { state, session } = await this.getBrowserState(profileResult.profileId);
@@ -949,6 +966,13 @@ class ScrapeQueue {
             }
 
         } finally {
+            // FRESH CONNECTION POLICY: Always disconnect browser for fresh instance on next scrape
+            // This ensures complete isolation between scrapes
+            if (currentProfileId) {
+                console.log(`[SCRAPE-QUEUE] Ensuring browser disconnect for profile ${currentProfileId}...`);
+                await disconnectBrowserForProfile(currentProfileId);
+            }
+            
             // ALWAYS close browser session if it was created, even if other cleanup failed
             if (browserSession) {
                 try {

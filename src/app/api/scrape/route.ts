@@ -53,16 +53,27 @@ export async function POST(request: Request) {
             return corsJsonResponse({ error: 'Unauthorized' }, request, { status: 401 });
         }
 
-        // Rate limit per user for scrape creation
-        const rateLimit = checkRateLimit(user.id, RATE_LIMITS.SCRAPE);
-        if (rateLimit.limited) {
-            return corsJsonResponse({
-                error: 'Rate limit exceeded',
-                retryAfter: rateLimit.resetInSeconds
-            }, request, {
-                status: 429,
-                headers: { 'Retry-After': rateLimit.resetInSeconds.toString() }
-            });
+        // Check if user is admin (admins bypass rate limit)
+        const { data: profile } = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .single();
+        
+        const isAdmin = profile?.role === 'admin';
+
+        // Rate limit per user for scrape creation (admins bypass)
+        if (!isAdmin) {
+            const rateLimit = checkRateLimit(user.id, RATE_LIMITS.SCRAPE);
+            if (rateLimit.limited) {
+                return corsJsonResponse({
+                    error: 'Rate limit exceeded',
+                    retryAfter: rateLimit.resetInSeconds
+                }, request, {
+                    status: 429,
+                    headers: { 'Retry-After': rateLimit.resetInSeconds.toString() }
+                });
+            }
         }
 
         const { url, filters, pages = 1, name, tags = [] } = await request.json();

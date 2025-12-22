@@ -117,10 +117,17 @@ export async function middleware(request: NextRequest) {
         );
 
         // Routes only for full app users
-        const fullAppRoutes = ['/dashboard', '/scrapes', '/leads'];
+        // Note: /scrapes/[id] detail pages are allowed for scrape-only users to view their leads
+        const fullAppRoutes = ['/dashboard', '/leads'];
         const isFullAppRoute = fullAppRoutes.some(route => 
             pathname === route || pathname.startsWith(route + '/')
         );
+        
+        // Check if accessing scrapes listing page (not detail pages)
+        // /scrapes exactly or /scrapes/ with nothing after = listing page (block for scrape-only)
+        // /scrapes/[id] = detail page (allow for scrape-only users to view their leads)
+        const isScrapeListingPage = pathname === '/scrapes' || pathname === '/scrapes/';
+        const isFullAppRouteWithScrapes = isFullAppRoute || isScrapeListingPage;
 
         // Check if account is disabled
         if (profile?.is_disabled) {
@@ -151,7 +158,8 @@ export async function middleware(request: NextRequest) {
         }
 
         // Scrape-only user accessing full app routes - redirect to scrape dashboard
-        if (isScrapeOnlyUser && isFullAppRoute) {
+        // Note: scrape-only users CAN access /scrapes/[id] detail pages to view their leads
+        if (isScrapeOnlyUser && isFullAppRouteWithScrapes) {
             const url = request.nextUrl.clone();
             url.pathname = '/scrape-dashboard';
             return NextResponse.redirect(url);

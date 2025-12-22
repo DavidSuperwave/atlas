@@ -193,37 +193,56 @@ export class BrowserManagerGoLogin {
     /**
      * Ensure the profile is running and ready
      * 
+     * FRESH CONNECTION POLICY: Always restarts the profile for a clean state.
+     * This ensures each scrape gets a completely fresh browser instance.
+     * 
      * @returns WebSocket endpoint for the running profile
      */
     async ensureProfileReady(): Promise<string> {
-        // Check if we already have a valid connection
-        if (this.currentWsEndpoint && this.browser?.connected) {
-            console.log(`[GOLOGIN-BROWSER] Profile ${this.profileId} already running and connected`);
-            return this.currentWsEndpoint;
+        // FRESH CONNECTION: Always stop and restart the profile for clean state
+        console.log(`[GOLOGIN-BROWSER] Ensuring fresh profile state for ${this.profileId}...`);
+        
+        // Stop profile if it's running to get fresh state
+        try {
+            await this.client.stopProfile();
+            await this.sleep(1000); // Brief pause before restart
+        } catch (e) {
+            // Profile might not be running, that's fine
+            console.log(`[GOLOGIN-BROWSER] Profile was not running or stop failed (this is ok)`);
         }
-
-        // Start the profile
+        
+        this.currentWsEndpoint = null;
+        
+        // Start fresh profile
         return this.startProfile();
     }
 
     /**
      * Connect to GoLogin browser with retry logic
      * 
+     * FRESH CONNECTION POLICY: Every call creates a new browser connection.
+     * This ensures complete isolation between scrapes and prevents state leakage.
+     * 
      * @returns Connected Puppeteer Browser instance
      * @throws Error if connection fails after all retries
      */
     async connect(): Promise<Browser> {
-        // Return existing connection if available and connected
-        if (this.browser && this.browser.isConnected()) {
-            console.log(`[GOLOGIN-BROWSER] Reusing existing browser connection for profile ${this.profileId}`);
-            return this.browser;
-        }
-
         // Prevent concurrent connection attempts
         if (this.isConnecting) {
             console.log(`[GOLOGIN-BROWSER] Connection attempt already in progress for profile ${this.profileId}, waiting...`);
             await this.sleep(1000);
             return this.connect();
+        }
+
+        // FRESH CONNECTION: Always disconnect existing connection before creating new one
+        if (this.browser && this.browser.isConnected()) {
+            console.log(`[GOLOGIN-BROWSER] Disconnecting existing browser to create fresh connection for profile ${this.profileId}`);
+            try {
+                await this.browser.disconnect();
+            } catch (e) {
+                console.warn(`[GOLOGIN-BROWSER] Error disconnecting existing browser:`, e);
+            }
+            this.browser = null;
         }
 
         this.isConnecting = true;

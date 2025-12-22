@@ -32,6 +32,7 @@ interface QueueItem {
     type: 'lead' | 'bulk';
     leadId?: string; // For lead enrichment
     jobId?: string; // For bulk verification
+    scrapeId?: string; // For cancellation tracking
     permutations?: { email: string; pattern: string }[]; // For lead enrichment
     emails?: string[]; // For bulk verification
     userId?: string; // User ID for credit deduction
@@ -76,6 +77,9 @@ export class VerificationQueue {
     private workers: WorkerState[] = [];
     private isInitialized = false;
     private keyPool: ApiKeyPool;
+
+    // Cancellation tracking - tracks cancelled scrape IDs
+    private cancelledScrapes: Set<string> = new Set();
 
     // Legacy single-key support (backward compatible)
     private legacyApiKey: string;
@@ -301,6 +305,13 @@ export class VerificationQueue {
      */
     private async verifyAndSaveWithWorker(item: QueueItem, worker: WorkerState): Promise<void> {
         console.log(`[WORKER-${worker.id}] Processing lead ${item.leadId}...`);
+
+        // Check if scrape has been cancelled
+        if (item.scrapeId && this.cancelledScrapes.has(item.scrapeId)) {
+            console.log(`[WORKER-${worker.id}] Skipping lead ${item.leadId} - scrape ${item.scrapeId} was cancelled`);
+            await this.updateLeadAsCancelled(item.leadId!);
+            return;
+        }
 
         if (!worker.apiKey) {
             const error = 'API key not available';
@@ -638,6 +649,16 @@ export class VerificationQueue {
             .eq('id', leadId);
     }
 
+    private async updateLeadAsCancelled(leadId: string) {
+        await supabase
+            .from('leads')
+            .update({
+                verification_status: null,
+                verification_data: null
+            })
+            .eq('id', leadId);
+    }
+
     private async updateBulkJobWithError(jobId: string, error: unknown) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
@@ -760,6 +781,64 @@ export class VerificationQueue {
             delayBetweenRequestsMs: RATE_LIMIT_DELAY,
             maxEmailsPerSecond: Math.floor(1000 / RATE_LIMIT_DELAY)
         };
+    }
+
+    // ==================== Cancellation Methods ====================
+
+    /**
+     * Cancel enrichment for a specific scrape
+     * - Marks the scrape as cancelled so workers will skip its leads
+     * - Removes queued items for this scrape from the queue
+     * @returns Number of items removed from queue
+     */
+    cancelEnrichment(scrapeId: string): number {
+        console.log(`[VERIFICATION-QUEUE] Cancelling enrichment for scrape ${scrapeId}`);
+        
+        // Add to cancelled set so workers will skip leads from this scrape
+        this.cancelledScrapes.add(scrapeId);
+        
+        // Remove items from queue that belong to this scrape
+        const originalLength = this.queue.length;
+        this.queue = this.queue.filter(item => item.scrapeId !== scrapeId);
+        const removedCount = originalLength - this.queue.length;
+        
+        console.log(`[VERIFICATION-QUEUE] Removed ${removedCount} items from queue for scrape ${scrapeId}`);
+        
+        return removedCount;
+    }
+
+    /**
+     * Check if a scrape has been cancelled
+     */
+    isCancelled(scrapeId: string): boolean {
+        return this.cancelledScrapes.has(scrapeId);
+    }
+
+    /**
+     * Clear cancellation flag for a scrape (e.g., when restarting enrichment)
+     */
+    clearCancellation(scrapeId: string): void {
+        this.cancelledScrapes.delete(scrapeId);
+        console.log(`[VERIFICATION-QUEUE] Cleared cancellation for scrape ${scrapeId}`);
+    }
+
+    /**
+     * Remove all queued items for a specific scrape
+     * @returns Number of items removed
+     */
+    removeQueuedItemsForScrape(scrapeId: string): number {
+        const originalLength = this.queue.length;
+        this.queue = this.queue.filter(item => item.scrapeId !== scrapeId);
+        const removedCount = originalLength - this.queue.length;
+        console.log(`[VERIFICATION-QUEUE] Removed ${removedCount} queued items for scrape ${scrapeId}`);
+        return removedCount;
+    }
+
+    /**
+     * Get count of queued items for a specific scrape
+     */
+    getQueuedCountForScrape(scrapeId: string): number {
+        return this.queue.filter(item => item.scrapeId === scrapeId).length;
     }
 }
 

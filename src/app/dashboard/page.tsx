@@ -188,7 +188,20 @@ export default function DashboardPage() {
       .select('*')
       .order('created_at', { ascending: false });
     
-    if (data) setScrapes(data);
+    if (data) {
+      // Get processing leads count for each scrape
+      const scrapesWithEnrichingCount = await Promise.all(
+        data.map(async (scrape) => {
+          const { count } = await supabase
+            .from('leads')
+            .select('*', { count: 'exact', head: true })
+            .eq('scrape_id', scrape.id)
+            .eq('verification_status', 'processing');
+          return { ...scrape, enriching_count: count || 0 };
+        })
+      );
+      setScrapes(scrapesWithEnrichingCount);
+    }
     setFetchingData(false);
   }
 
@@ -742,6 +755,16 @@ export default function DashboardPage() {
                         )}
                         {scrape.status.toUpperCase()}
                       </span>
+                      {/* Enriching Badge - shows when leads are being processed */}
+                      {scrape.enriching_count > 0 && (
+                        <span className="px-2.5 py-0.5 rounded-full text-xs font-medium whitespace-nowrap flex items-center gap-1.5 bg-violet-100 text-violet-700 border border-violet-200">
+                          <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          ENRICHING
+                        </span>
+                      )}
                       {/* Time estimate for active scrapes */}
                       {activeScrapeStatuses[scrape.id]?.timeEstimateFormatted && (
                         <span className="text-xs text-zinc-500 whitespace-nowrap">

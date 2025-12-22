@@ -1,7 +1,22 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser, createServiceClient } from '@/lib/supabase-server';
 
-// POST: Create a new credit order request
+export const runtime = 'nodejs';
+
+// Premium plan names that require Telegram contact
+const PREMIUM_PLANS = ['Enterprise', 'Ultimate'];
+
+/**
+ * Credit Orders API
+ * 
+ * Note: Standard plans now redirect directly to Whop checkout from the frontend.
+ * This API is used for:
+ * - Premium plans (manual Telegram contact flow)
+ * - Fetching order history
+ * - Legacy manual order flow
+ */
+
+// POST: Create a new credit order request (for Premium plans or manual flow)
 export async function POST(request: Request) {
     try {
         const user = await getCurrentUser();
@@ -14,7 +29,7 @@ export async function POST(request: Request) {
         }
 
         const body = await request.json();
-        const { planName, creditsAmount } = body;
+        const { planName, creditsAmount, isSubscription } = body;
 
         // Validate required fields
         if (!planName || !creditsAmount) {
@@ -48,10 +63,13 @@ export async function POST(request: Request) {
             );
         }
 
+        // Check if this is a Premium plan
+        const isPremiumPlan = PREMIUM_PLANS.includes(planName);
+
         // Check for existing pending order
         const { data: existingOrder } = await supabase
             .from('credit_orders')
-            .select('id')
+            .select('id, status')
             .eq('user_id', user.id)
             .eq('status', 'pending')
             .single();
@@ -63,8 +81,8 @@ export async function POST(request: Request) {
             );
         }
 
-        // Create the credit order
-        const { data, error } = await supabase
+        // Create the order
+        const { data: order, error: orderError } = await supabase
             .from('credit_orders')
             .insert({
                 user_id: user.id,
@@ -72,22 +90,35 @@ export async function POST(request: Request) {
                 credits_amount: creditsAmount,
                 plan_name: planName,
                 status: 'pending',
+                payment_method: isPremiumPlan ? 'telegram' : 'manual',
             })
             .select()
             .single();
 
-        if (error) {
-            console.error('Error creating credit order:', error);
+        if (orderError) {
+            console.error('Error creating credit order:', orderError);
             return NextResponse.json(
                 { error: 'Failed to create credit order' },
                 { status: 500 }
             );
         }
 
+        // Return appropriate response based on plan type
+        if (isPremiumPlan) {
+            return NextResponse.json({
+                success: true,
+                message: 'Premium plan order created. Please contact us via Telegram to complete setup.',
+                order: order,
+                requiresTelegramContact: true,
+                isPremium: true,
+            });
+        }
+
         return NextResponse.json({
             success: true,
-            message: 'Credit order submitted successfully',
-            order: data,
+            message: 'Order submitted. An admin will review and process your order.',
+            order: order,
+            isSubscription: isSubscription || false,
         });
     } catch (error) {
         console.error('Error processing credit order:', error);
@@ -135,4 +166,3 @@ export async function GET() {
         );
     }
 }
-
