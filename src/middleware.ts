@@ -111,7 +111,7 @@ export async function middleware(request: NextRequest) {
         const isFullAppUser = profile?.account_type === 'full' || !profile?.account_type;
 
         // Routes only for scrape-only users
-        const scrapeOnlyRoutes = ['/scrape-dashboard', '/scrape-pricing', '/onboarding/upgrade'];
+        const scrapeOnlyRoutes = ['/scrape-dashboard', '/scrape-pricing', '/credits', '/onboarding/upgrade'];
         const isScrapeOnlyRoute = scrapeOnlyRoutes.some(route => 
             pathname === route || pathname.startsWith(route + '/')
         );

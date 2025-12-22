@@ -71,17 +71,17 @@ const PREMIUM_PLANS: PricingPlan[] = [
     {
         name: 'Enterprise',
         price: 499,
-        credits: 215000,
-        pricePer1k: 2.30,
-        features: ['215,000 Apollo leads', 'Team management', 'Credit rollover', 'Dedicated support'],
+        credits: 500000,
+        pricePer1k: 1.00,
+        features: ['500,000 Credits', 'Get Access To Live Scraper', 'Get leads instantly', 'Only pay for valid leads'],
         isPayAsYouGo: true
     },
     {
         name: 'Ultimate',
         price: 999,
-        credits: 450000,
-        pricePer1k: 2.20,
-        features: ['450,000 Apollo leads', 'Team management', 'Credit rollover', 'Priority support'],
+        credits: 1000000,
+        pricePer1k: 1.00,
+        features: ['1,000,000 Credits', 'Get Access To Live Scraper', 'Get leads instantly', 'Only pay for valid leads'],
         isPayAsYouGo: true
     }
 ];
@@ -236,27 +236,34 @@ export default function CreditsPage() {
                         </div>
 
                         {/* Setup Type Toggle */}
-                        <div className="flex items-center justify-center gap-2">
-                            <button
-                                onClick={() => setSetupType('standard')}
-                                className={`px-6 py-2.5 rounded-full font-semibold transition-all text-sm ${
-                                    setupType === 'standard'
-                                        ? 'bg-purple-600 text-white shadow-lg shadow-purple-200'
-                                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                }`}
-                            >
-                                Standard Setup
-                            </button>
-                            <button
-                                onClick={() => setSetupType('premium')}
-                                className={`px-6 py-2.5 rounded-full font-semibold transition-all text-sm ${
-                                    setupType === 'premium'
-                                        ? 'bg-purple-600 text-white shadow-lg shadow-purple-200'
-                                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                }`}
-                            >
-                                Premium Setup
-                            </button>
+                        <div className="flex flex-col items-center gap-3">
+                            <div className="flex items-center justify-center gap-2">
+                                <button
+                                    onClick={() => setSetupType('standard')}
+                                    className={`px-6 py-2.5 rounded-full font-semibold transition-all text-sm ${
+                                        setupType === 'standard'
+                                            ? 'bg-purple-600 text-white shadow-lg shadow-purple-200'
+                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                    }`}
+                                >
+                                    Standard Setup
+                                </button>
+                                <button
+                                    onClick={() => setSetupType('premium')}
+                                    className={`px-6 py-2.5 rounded-full font-semibold transition-all text-sm ${
+                                        setupType === 'premium'
+                                            ? 'bg-purple-600 text-white shadow-lg shadow-purple-200'
+                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                    }`}
+                                >
+                                    Premium Setup
+                                </button>
+                            </div>
+                            {setupType === 'premium' && (
+                                <p className="text-purple-600 font-medium text-sm">
+                                    Only Pay For Valid Leads (Apollo Account Required)
+                                </p>
+                            )}
                         </div>
                     </div>
 
@@ -342,7 +349,7 @@ export default function CreditsPage() {
 
                     {setupType === 'premium' && (
                         <p className="text-gray-500 text-sm text-center mt-6">
-                            Premium plans require your own Apollo account. Contact us via Telegram to get started.
+                            Contact us via Telegram to set up your Apollo account and start scraping.
                         </p>
                     )}
                 </div>

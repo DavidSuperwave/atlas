@@ -179,7 +179,7 @@ export default function ScrapeDashboardPage() {
                             </div>
                         </div>
                         <Link
-                            href="/scrape-pricing"
+                            href="/credits"
                             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg transition-colors"
                         >
                             Buy Credits
