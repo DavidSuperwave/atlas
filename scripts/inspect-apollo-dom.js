@@ -95,3 +95,4 @@ if (!table) {
     console.log(`  ✓ a[href*="/organizations/"]: ${companyLink ? 'YES' : 'NO'}`);
 }
 
+
